@@ -17,25 +17,27 @@
 
 package org.apache.kafka.server.network;
 
-import java.util.Arrays;
+import org.apache.kafka.common.ClusterResource;
+import org.apache.kafka.common.Endpoint;
+import org.apache.kafka.common.security.auth.SecurityProtocol;
+
+import org.junit.jupiter.api.Test;
+
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
-import org.apache.kafka.common.ClusterResource;
-import org.apache.kafka.common.Endpoint;
-import org.apache.kafka.common.security.auth.SecurityProtocol;
-import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-final public class EndpointReadyFuturesTest {
+public final class EndpointReadyFuturesTest {
     private static final Endpoint EXTERNAL =
             new Endpoint("EXTERNAL", SecurityProtocol.SSL, "127.0.0.1", 9092);
 
@@ -45,9 +47,9 @@ final public class EndpointReadyFuturesTest {
     private static final KafkaAuthorizerServerInfo INFO = new KafkaAuthorizerServerInfo(
         new ClusterResource("S6-01LPiQOCBhhFIunQUcQ"),
         1,
-        Arrays.asList(EXTERNAL, INTERNAL),
+        List.of(EXTERNAL, INTERNAL),
         INTERNAL,
-        Arrays.asList("INTERNAL"));
+        List.of("INTERNAL"));
 
     static void assertComplete(
             EndpointReadyFutures readyFutures,
@@ -96,7 +98,7 @@ final public class EndpointReadyFuturesTest {
     public void testImmediateCompletion() {
         EndpointReadyFutures readyFutures = new EndpointReadyFutures.Builder().
                 build(Optional.empty(), INFO);
-        assertEquals(new HashSet<>(Arrays.asList(EXTERNAL, INTERNAL)),
+        assertEquals(new HashSet<>(List.of(EXTERNAL, INTERNAL)),
                 readyFutures.futures().keySet());
         assertComplete(readyFutures, EXTERNAL, INTERNAL);
     }
@@ -107,7 +109,7 @@ final public class EndpointReadyFuturesTest {
         EndpointReadyFutures readyFutures = new EndpointReadyFutures.Builder().
                 addReadinessFuture("foo", foo).
                 build(Optional.empty(), INFO);
-        assertEquals(new HashSet<>(Arrays.asList(EXTERNAL, INTERNAL)),
+        assertEquals(new HashSet<>(List.of(EXTERNAL, INTERNAL)),
                 readyFutures.futures().keySet());
         assertIncomplete(readyFutures, EXTERNAL, INTERNAL);
         foo.complete(null);
@@ -122,7 +124,7 @@ final public class EndpointReadyFuturesTest {
                 addReadinessFuture("foo", foo).
                 addReadinessFuture("bar", bar).
                 build(Optional.empty(), INFO);
-        assertEquals(new HashSet<>(Arrays.asList(EXTERNAL, INTERNAL)),
+        assertEquals(new HashSet<>(List.of(EXTERNAL, INTERNAL)),
                 readyFutures.futures().keySet());
         assertIncomplete(readyFutures, EXTERNAL, INTERNAL);
         foo.complete(null);
@@ -139,7 +141,7 @@ final public class EndpointReadyFuturesTest {
         EndpointReadyFutures readyFutures = new EndpointReadyFutures.Builder().
                 addReadinessFutures("baz", bazFutures).
                 build(Optional.empty(), INFO);
-        assertEquals(new HashSet<>(Arrays.asList(EXTERNAL, INTERNAL)),
+        assertEquals(new HashSet<>(List.of(EXTERNAL, INTERNAL)),
                 readyFutures.futures().keySet());
         assertIncomplete(readyFutures, EXTERNAL, INTERNAL);
         bazFutures.get(EXTERNAL).complete(null);
@@ -157,7 +159,7 @@ final public class EndpointReadyFuturesTest {
                 addReadinessFuture("foo", foo).
                 addReadinessFuture("bar", bar).
                 build(Optional.empty(), INFO);
-        assertEquals(new HashSet<>(Arrays.asList(EXTERNAL, INTERNAL)),
+        assertEquals(new HashSet<>(List.of(EXTERNAL, INTERNAL)),
                 readyFutures.futures().keySet());
         assertIncomplete(readyFutures, EXTERNAL, INTERNAL);
         foo.complete(null);

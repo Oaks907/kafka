@@ -86,13 +86,18 @@ public final class ScramCredentialData {
                 setIterations(iterations);
     }
 
-    public ScramCredential toCredential(ScramMechanism mechanism) {
+    public ScramCredential toCredential() {
         return new ScramCredential(salt, storedKey, serverKey, iterations);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(salt, storedKey, serverKey, iterations);
+        return Objects.hash(
+            Arrays.hashCode(salt),
+            Arrays.hashCode(storedKey),
+            Arrays.hashCode(serverKey),
+            iterations
+        );
     }
 
     @Override

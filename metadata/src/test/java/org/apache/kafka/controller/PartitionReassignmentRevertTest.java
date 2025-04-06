@@ -17,13 +17,14 @@
 
 package org.apache.kafka.controller;
 
-import java.util.Arrays;
-
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.metadata.LeaderRecoveryState;
 import org.apache.kafka.metadata.PartitionRegistration;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -43,8 +44,8 @@ public class PartitionReassignmentRevertTest {
             }).
             setLeader(3).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(100).setPartitionEpoch(200).build();
         PartitionReassignmentRevert revert = new PartitionReassignmentRevert(registration);
-        assertEquals(Arrays.asList(3, 2, 1), revert.replicas());
-        assertEquals(Arrays.asList(3, 2), revert.isr());
+        assertEquals(List.of(3, 2, 1), revert.replicas());
+        assertEquals(List.of(3, 2), revert.isr());
         assertFalse(revert.unclean());
     }
 
@@ -59,8 +60,8 @@ public class PartitionReassignmentRevertTest {
             }).
             setRemovingReplicas(new int[]{2, 1}).setLeader(3).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(100).setPartitionEpoch(200).build();
         PartitionReassignmentRevert revert = new PartitionReassignmentRevert(registration);
-        assertEquals(Arrays.asList(3, 2, 1), revert.replicas());
-        assertEquals(Arrays.asList(3, 2), revert.isr());
+        assertEquals(List.of(3, 2, 1), revert.replicas());
+        assertEquals(List.of(3, 2), revert.isr());
         assertFalse(revert.unclean());
     }
 
@@ -77,8 +78,8 @@ public class PartitionReassignmentRevertTest {
             }).
             setAddingReplicas(new int[]{4, 5}).setLeader(3).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(100).setPartitionEpoch(200).build();
         PartitionReassignmentRevert revert = new PartitionReassignmentRevert(registration);
-        assertEquals(Arrays.asList(3, 2, 1), revert.replicas());
-        assertEquals(Arrays.asList(2), revert.isr());
+        assertEquals(List.of(3, 2, 1), revert.replicas());
+        assertEquals(List.of(2), revert.isr());
         assertFalse(revert.unclean());
     }
 
@@ -95,8 +96,8 @@ public class PartitionReassignmentRevertTest {
             }).
             setRemovingReplicas(new int[]{2}).setAddingReplicas(new int[]{4, 5}).setLeader(3).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(100).setPartitionEpoch(200).build();
         PartitionReassignmentRevert revert = new PartitionReassignmentRevert(registration);
-        assertEquals(Arrays.asList(3, 2, 1), revert.replicas());
-        assertEquals(Arrays.asList(2), revert.isr());
+        assertEquals(List.of(3, 2, 1), revert.replicas());
+        assertEquals(List.of(2), revert.isr());
         assertFalse(revert.unclean());
     }
 
@@ -113,8 +114,8 @@ public class PartitionReassignmentRevertTest {
             }).
             setRemovingReplicas(new int[]{2}).setAddingReplicas(new int[]{4, 5}).setLeader(3).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(100).setPartitionEpoch(200).build();
         PartitionReassignmentRevert revert = new PartitionReassignmentRevert(registration);
-        assertEquals(Arrays.asList(3, 2, 1), revert.replicas());
-        assertEquals(Arrays.asList(3), revert.isr());
+        assertEquals(List.of(3, 2, 1), revert.replicas());
+        assertEquals(List.of(3), revert.isr());
         assertTrue(revert.unclean());
     }
 }

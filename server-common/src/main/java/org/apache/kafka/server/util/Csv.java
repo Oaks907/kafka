@@ -17,7 +17,9 @@
 package org.apache.kafka.server.util;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 public class Csv {
 
@@ -37,5 +39,17 @@ public class Csv {
             map.put(s.substring(0, lio).trim(), s.substring(lio + 1).trim());
         }
         return map;
+    }
+
+    /**
+     * Parse a comma separated string into a sequence of strings.
+     * Whitespace surrounding the comma will be removed.
+     */
+    public static List<String> parseCsvList(String csvList) {
+        if (csvList == null || csvList.isEmpty()) {
+            return List.of();
+        } else {
+            return Stream.of(csvList.split("\\s*,\\s*")).filter(v -> !v.isEmpty()).toList();
+        }
     }
 }

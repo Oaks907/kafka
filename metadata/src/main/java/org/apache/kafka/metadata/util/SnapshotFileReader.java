@@ -33,12 +33,12 @@ import org.apache.kafka.raft.LeaderAndEpoch;
 import org.apache.kafka.raft.RaftClient;
 import org.apache.kafka.raft.internals.MemoryBatchReader;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.OptionalInt;
@@ -125,8 +125,7 @@ public final class SnapshotFileReader implements AutoCloseable {
     }
 
     private void handleControlBatch(FileChannelRecordBatch batch) {
-        for (Iterator<Record> iter = batch.iterator(); iter.hasNext(); ) {
-            Record record = iter.next();
+        for (Record record : batch) {
             try {
                 short typeId = ControlRecordType.parseTypeId(record.key());
                 ControlRecordType type = ControlRecordType.fromTypeId(typeId);
@@ -162,7 +161,7 @@ public final class SnapshotFileReader implements AutoCloseable {
         }
         listener.handleCommit(
             MemoryBatchReader.of(
-                Collections.singletonList(
+                List.of(
                     Batch.data(
                         batch.baseOffset(),
                         batch.partitionLeaderEpoch(),
@@ -208,9 +207,5 @@ public final class SnapshotFileReader implements AutoCloseable {
     public void close() throws Exception {
         beginShutdown("closing");
         queue.close();
-    }
-
-    public CompletableFuture<Void> caughtUpFuture() {
-        return caughtUpFuture;
     }
 }

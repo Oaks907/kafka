@@ -22,26 +22,29 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.KafkaException;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.InvalidTopicException;
 import org.apache.kafka.common.errors.TopicAuthorizationException;
-import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.header.internals.RecordHeaders;
+import org.apache.kafka.common.internals.Plugin;
+import org.apache.kafka.common.utils.LogCaptureAppender;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.errors.ConnectException;
-import org.apache.kafka.connect.integration.MonitorableSourceConnector;
+import org.apache.kafka.connect.integration.TestableSourceConnector;
 import org.apache.kafka.connect.runtime.ConnectMetrics.MetricGroup;
-import org.apache.kafka.connect.storage.ClusterConfigState;
+import org.apache.kafka.connect.runtime.errors.ErrorHandlingMetrics;
 import org.apache.kafka.connect.runtime.errors.RetryWithToleranceOperator;
 import org.apache.kafka.connect.runtime.errors.RetryWithToleranceOperatorTest;
-import org.apache.kafka.connect.runtime.errors.ErrorHandlingMetrics;
 import org.apache.kafka.connect.runtime.isolation.Plugins;
+import org.apache.kafka.connect.runtime.isolation.TestPlugins;
 import org.apache.kafka.connect.runtime.standalone.StandaloneConfig;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.kafka.connect.source.SourceTask;
 import org.apache.kafka.connect.source.SourceTaskContext;
 import org.apache.kafka.connect.storage.CloseableOffsetStorageReader;
+import org.apache.kafka.connect.storage.ClusterConfigState;
 import org.apache.kafka.connect.storage.ConnectorOffsetBackingStore;
 import org.apache.kafka.connect.storage.Converter;
 import org.apache.kafka.connect.storage.HeaderConverter;
@@ -50,20 +53,18 @@ import org.apache.kafka.connect.storage.StatusBackingStore;
 import org.apache.kafka.connect.storage.StringConverter;
 import org.apache.kafka.connect.test.util.ConcurrencyUtils;
 import org.apache.kafka.connect.util.ConnectorTaskId;
-import org.apache.kafka.connect.util.ParameterizedTest;
 import org.apache.kafka.connect.util.TopicAdmin;
 import org.apache.kafka.connect.util.TopicCreationGroup;
-import org.apache.kafka.common.utils.LogCaptureAppender;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.AdditionalAnswers;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnit;
-import org.mockito.junit.MockitoRule;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.mockito.stubbing.Answer;
 
@@ -71,7 +72,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -87,7 +87,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
-import static org.apache.kafka.connect.integration.MonitorableSourceConnector.TOPIC_CONFIG;
+import static org.apache.kafka.connect.integration.TestableSourceConnector.TOPIC_CONFIG;
 import static org.apache.kafka.connect.runtime.ConnectorConfig.CONNECTOR_CLASS_CONFIG;
 import static org.apache.kafka.connect.runtime.ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG;
 import static org.apache.kafka.connect.runtime.ConnectorConfig.TASKS_MAX_CONFIG;
@@ -99,12 +99,12 @@ import static org.apache.kafka.connect.runtime.TopicCreationConfig.INCLUDE_REGEX
 import static org.apache.kafka.connect.runtime.TopicCreationConfig.PARTITIONS_CONFIG;
 import static org.apache.kafka.connect.runtime.TopicCreationConfig.REPLICATION_FACTOR_CONFIG;
 import static org.apache.kafka.connect.runtime.WorkerConfig.TOPIC_CREATION_ENABLE_CONFIG;
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThrows;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -121,12 +121,11 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 @SuppressWarnings({"unchecked"})
-@RunWith(Parameterized.class)
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class WorkerSourceTaskTest {
 
     public static final String POLL_TIMEOUT_MSG = "Timeout waiting for poll";
-    @org.junit.Rule
-    public MockitoRule rule = MockitoJUnit.rule().strictness(Strictness.STRICT_STUBS);
 
     private static final String TOPIC = "topic";
     private static final Map<String, Object> PARTITION = Collections.singletonMap("key", "partition".getBytes());
@@ -190,27 +189,16 @@ public class WorkerSourceTaskTest {
             new SourceRecord(PARTITION, OFFSET, "topic", null, KEY_SCHEMA, KEY, RECORD_SCHEMA, RECORD)
     );
 
-    private final boolean enableTopicCreation;
 
-    @ParameterizedTest.Parameters
-    public static Collection<Boolean> parameters() {
-        return Arrays.asList(false, true);
-    }
-
-    public WorkerSourceTaskTest(boolean enableTopicCreation) {
-        this.enableTopicCreation = enableTopicCreation;
-    }
-
-    @Before
-    public void setup() {
-        Map<String, String> workerProps = workerProps();
+    public void setup(boolean enableTopicCreation) {
+        Map<String, String> workerProps = workerProps(enableTopicCreation);
         plugins = new Plugins(workerProps);
         config = new StandaloneConfig(workerProps);
         sourceConfig = new SourceConnectorConfig(plugins, sourceConnectorPropsWithGroups(TOPIC), true);
         metrics = new MockConnectMetrics();
     }
 
-    private Map<String, String> workerProps() {
+    private Map<String, String> workerProps(boolean enableTopicCreation) {
         Map<String, String> props = new HashMap<>();
         props.put("key.converter", "org.apache.kafka.connect.json.JsonConverter");
         props.put("value.converter", "org.apache.kafka.connect.json.JsonConverter");
@@ -223,7 +211,7 @@ public class WorkerSourceTaskTest {
         // setup up props for the source connector
         Map<String, String> props = new HashMap<>();
         props.put("name", "foo-connector");
-        props.put(CONNECTOR_CLASS_CONFIG, MonitorableSourceConnector.class.getSimpleName());
+        props.put(CONNECTOR_CLASS_CONFIG, TestableSourceConnector.class.getSimpleName());
         props.put(TASKS_MAX_CONFIG, String.valueOf(1));
         props.put(TOPIC_CONFIG, topic);
         props.put(KEY_CONVERTER_CLASS_CONFIG, StringConverter.class.getName());
@@ -237,14 +225,14 @@ public class WorkerSourceTaskTest {
         return props;
     }
 
-    @After
+    @AfterEach
     public void tearDown() {
         if (metrics != null) metrics.stop();
         verifyNoMoreInteractions(statusListener);
     }
 
     private void createWorkerTask() {
-        createWorkerTask(TargetState.STARTED, RetryWithToleranceOperatorTest.noopOperator());
+        createWorkerTask(TargetState.STARTED, RetryWithToleranceOperatorTest.noneOperator());
     }
 
     private void createWorkerTaskWithErrorToleration() {
@@ -252,7 +240,7 @@ public class WorkerSourceTaskTest {
     }
 
     private void createWorkerTask(TargetState initialState) {
-        createWorkerTask(initialState, RetryWithToleranceOperatorTest.noopOperator());
+        createWorkerTask(initialState, RetryWithToleranceOperatorTest.noneOperator());
     }
 
     private void createWorkerTask(TargetState initialState, RetryWithToleranceOperator<SourceRecord> retryWithToleranceOperator) {
@@ -261,14 +249,19 @@ public class WorkerSourceTaskTest {
 
     private void createWorkerTask(TargetState initialState, Converter keyConverter, Converter valueConverter,
                                   HeaderConverter headerConverter, RetryWithToleranceOperator<SourceRecord> retryWithToleranceOperator) {
-        workerTask = new WorkerSourceTask(taskId, sourceTask, statusListener, initialState, keyConverter, valueConverter, errorHandlingMetrics, headerConverter,
+        Plugin<Converter> keyConverterPlugin = metrics.wrap(keyConverter, taskId,  true);
+        Plugin<Converter> valueConverterPlugin = metrics.wrap(valueConverter, taskId,  false);
+        Plugin<HeaderConverter> headerConverterPlugin = metrics.wrap(headerConverter, taskId);
+        workerTask = new WorkerSourceTask(taskId, sourceTask, statusListener, initialState, keyConverterPlugin, valueConverterPlugin, errorHandlingMetrics, headerConverterPlugin,
                 transformationChain, producer, admin, TopicCreationGroup.configuredGroups(sourceConfig),
                 offsetReader, offsetWriter, offsetStore, config, clusterConfigState, metrics, plugins.delegatingLoader(), Time.SYSTEM,
-                retryWithToleranceOperator, statusBackingStore, Runnable::run, Collections::emptyList);
+                retryWithToleranceOperator, statusBackingStore, Runnable::run, Collections::emptyList, TestPlugins.noOpLoaderSwap());
     }
 
-    @Test
-    public void testStartPaused() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testStartPaused(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         final CountDownLatch pauseLatch = new CountDownLatch(1);
 
         createWorkerTask(TargetState.PAUSED);
@@ -291,8 +284,10 @@ public class WorkerSourceTaskTest {
         verifyClose();
     }
 
-    @Test
-    public void testPause() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testPause(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         createWorkerTask();
 
         AtomicInteger count = new AtomicInteger(0);
@@ -330,8 +325,10 @@ public class WorkerSourceTaskTest {
         verifyClose();
     }
 
-    @Test
-    public void testPollsInBackground() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testPollsInBackground(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         createWorkerTask();
 
         final CountDownLatch pollLatch = expectPolls(10);
@@ -355,8 +352,10 @@ public class WorkerSourceTaskTest {
         verifyClose();
     }
 
-    @Test
-    public void testFailureInPoll() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testFailureInPoll(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         createWorkerTask();
 
         final CountDownLatch pollLatch = new CountDownLatch(1);
@@ -386,8 +385,10 @@ public class WorkerSourceTaskTest {
         verifyClose();
     }
 
-    @Test
-    public void testFailureInPollAfterCancel() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testFailureInPollAfterCancel(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         createWorkerTask();
 
         final CountDownLatch pollLatch = new CountDownLatch(1);
@@ -425,8 +426,10 @@ public class WorkerSourceTaskTest {
         }
     }
 
-    @Test
-    public void testFailureInPollAfterStop() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testFailureInPollAfterStop(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         createWorkerTask();
 
         final CountDownLatch pollLatch = new CountDownLatch(1);
@@ -458,8 +461,10 @@ public class WorkerSourceTaskTest {
         verifyClose();
     }
 
-    @Test
-    public void testPollReturnsNoRecords() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testPollReturnsNoRecords(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         // Test that the task handles an empty list of records
         createWorkerTask();
 
@@ -488,8 +493,10 @@ public class WorkerSourceTaskTest {
         verifyClose();
     }
 
-    @Test
-    public void testCommit() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testCommit(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         // Test that the task commits properly when prompted
         createWorkerTask();
 
@@ -522,8 +529,10 @@ public class WorkerSourceTaskTest {
         verifyClose();
     }
 
-    @Test
-    public void testCommitFailure() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testCommitFailure(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         // Test that the task commits properly when prompted
         createWorkerTask();
 
@@ -556,8 +565,10 @@ public class WorkerSourceTaskTest {
         verifyClose();
     }
 
-    @Test
-    public void testSendRecordsRetries() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testSendRecordsRetries(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         createWorkerTask();
 
         // Differentiate only by Kafka partition, so we can reuse conversion expectations
@@ -589,8 +600,10 @@ public class WorkerSourceTaskTest {
         assertNull(workerTask.toSend);
     }
 
-    @Test
-    public void testSendRecordsProducerCallbackFail() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testSendRecordsProducerCallbackFail(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         createWorkerTask();
 
         SourceRecord record1 = new SourceRecord(PARTITION, OFFSET, "topic", 1, KEY_SCHEMA, KEY, RECORD_SCHEMA, RECORD);
@@ -608,8 +621,10 @@ public class WorkerSourceTaskTest {
         verify(valueConverter, times(2)).fromConnectData(anyString(), any(Headers.class), eq(RECORD_SCHEMA), eq(RECORD));
     }
 
-    @Test
-    public void testSendRecordsProducerSendFailsImmediately() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testSendRecordsProducerSendFailsImmediately(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         createWorkerTask();
 
         SourceRecord record1 = new SourceRecord(PARTITION, OFFSET, TOPIC, 1, KEY_SCHEMA, KEY, RECORD_SCHEMA, RECORD);
@@ -625,8 +640,10 @@ public class WorkerSourceTaskTest {
         assertThrows(ConnectException.class, () -> workerTask.sendRecords());
     }
 
-    @Test
-    public void testSendRecordsTaskCommitRecordFail() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testSendRecordsTaskCommitRecordFail(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         createWorkerTask();
 
         // Differentiate only by Kafka partition, so we can reuse conversion expectations
@@ -648,8 +665,10 @@ public class WorkerSourceTaskTest {
         assertNull(workerTask.toSend);
     }
 
-    @Test
-    public void testSourceTaskIgnoresProducerException() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testSourceTaskIgnoresProducerException(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         createWorkerTaskWithErrorToleration();
         expectTopicCreation(TOPIC);
 
@@ -686,8 +705,10 @@ public class WorkerSourceTaskTest {
         assertEquals(0, workerTask.submittedRecords.records.size());
     }
 
-    @Test
-    public void testSlowTaskStart() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testSlowTaskStart(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         final CountDownLatch startupLatch = new CountDownLatch(1);
         final CountDownLatch finishStartupLatch = new CountDownLatch(1);
 
@@ -722,8 +743,10 @@ public class WorkerSourceTaskTest {
         verifyClose();
     }
 
-    @Test
-    public void testCancel() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testCancel(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         createWorkerTask();
 
         workerTask.cancel();
@@ -992,8 +1015,8 @@ public class WorkerSourceTaskTest {
 
         try (LogCaptureAppender committerAppender = LogCaptureAppender.createAndRegister(SourceTaskOffsetCommitter.class);
              LogCaptureAppender taskAppender = LogCaptureAppender.createAndRegister(WorkerSourceTask.class)) {
-            committerAppender.setClassLoggerToTrace(SourceTaskOffsetCommitter.class);
-            taskAppender.setClassLoggerToTrace(WorkerSourceTask.class);
+            committerAppender.setClassLogger(SourceTaskOffsetCommitter.class, org.apache.logging.log4j.Level.TRACE);
+            taskAppender.setClassLogger(WorkerSourceTask.class, org.apache.logging.log4j.Level.TRACE);
             SourceTaskOffsetCommitter.commit(workerTask);
             assertEquals(Collections.emptyList(), taskAppender.getMessages());
 

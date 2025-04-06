@@ -16,14 +16,11 @@
  */
 package org.apache.kafka.clients.admin;
 
-import org.apache.kafka.common.annotation.InterfaceStability;
-
 import java.util.Arrays;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-@InterfaceStability.Evolving
 public enum TransactionState {
     ONGOING("Ongoing"),
     PREPARE_ABORT("PrepareAbort"),
@@ -34,7 +31,7 @@ public enum TransactionState {
     PREPARE_EPOCH_FENCE("PrepareEpochFence"),
     UNKNOWN("Unknown");
 
-    private final static Map<String, TransactionState> NAME_TO_ENUM = Arrays.stream(values())
+    private static final Map<String, TransactionState> NAME_TO_ENUM = Arrays.stream(values())
         .collect(Collectors.toMap(state -> state.name, Function.identity()));
 
     private final String name;

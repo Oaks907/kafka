@@ -32,9 +32,9 @@ import org.apache.kafka.common.requests.FindCoordinatorRequest.CoordinatorType
 import org.apache.kafka.common.requests.{AddPartitionsToTxnRequest, AddPartitionsToTxnResponse, FindCoordinatorRequest, FindCoordinatorResponse, InitProducerIdRequest, InitProducerIdResponse}
 import org.apache.kafka.server.config.ServerLogConfigs
 import org.junit.jupiter.api.Assertions._
-import org.junit.jupiter.api.{BeforeEach, Test, TestInfo}
+import org.junit.jupiter.api.{BeforeEach, TestInfo}
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.{Arguments, MethodSource}
+import org.junit.jupiter.params.provider.{Arguments, MethodSource, ValueSource}
 
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
@@ -109,9 +109,10 @@ class AddPartitionsToTxnRequestServerTest extends BaseRequestTest {
     assertTrue(errors.containsKey(nonExistentTopic))
     assertEquals(Errors.UNKNOWN_TOPIC_OR_PARTITION, errors.get(nonExistentTopic))
   }
-  
-  @Test
-  def testOneSuccessOneErrorInBatchedRequest(): Unit = {
+
+  @ParameterizedTest
+  @ValueSource(strings = Array("kraft"))
+  def testOneSuccessOneErrorInBatchedRequest(quorum: String): Unit = {
     val tp0 = new TopicPartition(topic1, 0)
     val transactionalId1 = "foobar"
     val transactionalId2 = "barfoo" // "barfoo" maps to the same transaction coordinator
@@ -123,7 +124,7 @@ class AddPartitionsToTxnRequestServerTest extends BaseRequestTest {
       .setName(tp0.topic)
       .setPartitions(Collections.singletonList(tp0.partition)))
 
-    val (coordinatorId, txn1) = setUpTransactions(transactionalId1, false, Set(tp0))
+    val (coordinatorId, txn1) = setUpTransactions(transactionalId1, verifyOnly = false, Set(tp0))
 
     val transactions = new AddPartitionsToTxnTransactionCollection()
     transactions.add(txn1)
@@ -148,12 +149,13 @@ class AddPartitionsToTxnRequestServerTest extends BaseRequestTest {
     assertEquals(expectedErrors, errors)
   }
 
-  @Test
-  def testVerifyOnly(): Unit = {
+  @ParameterizedTest
+  @ValueSource(strings = Array("kraft"))
+  def testVerifyOnly(quorum: String): Unit = {
     val tp0 = new TopicPartition(topic1, 0)
 
     val transactionalId = "foobar"
-    val (coordinatorId, txn) = setUpTransactions(transactionalId, true, Set(tp0))
+    val (coordinatorId, txn) = setUpTransactions(transactionalId, verifyOnly = true, Set(tp0))
 
     val transactions = new AddPartitionsToTxnTransactionCollection()
     transactions.add(txn)
@@ -172,6 +174,7 @@ class AddPartitionsToTxnRequestServerTest extends BaseRequestTest {
     // First find coordinator request creates the state topic, then wait for transactional topics to be created.
     connectAndReceive[FindCoordinatorResponse](findCoordinatorRequest, brokerSocketServer(brokers.head.config.brokerId))
     TestUtils.waitForAllPartitionsMetadata(brokers, "__transaction_state", 50)
+    TestUtils.ensureConsistentKRaftMetadata(brokers, controllerServer)
     val findCoordinatorResponse = connectAndReceive[FindCoordinatorResponse](findCoordinatorRequest, brokerSocketServer(brokers.head.config.brokerId))
     val coordinatorId = findCoordinatorResponse.data().coordinators().get(0).nodeId()
 
@@ -206,9 +209,7 @@ object AddPartitionsToTxnRequestServerTest {
    def parameters: JStream[Arguments] = {
     val arguments = mutable.ListBuffer[Arguments]()
     ApiKeys.ADD_PARTITIONS_TO_TXN.allVersions().forEach { version =>
-      Array("kraft", "zk").foreach { quorum =>
-        arguments += Arguments.of(quorum, version)
-      }
+      arguments += Arguments.of("kraft", version)
     }
     arguments.asJava.stream()
   }

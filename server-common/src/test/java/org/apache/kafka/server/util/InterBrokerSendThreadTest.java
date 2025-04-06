@@ -16,6 +16,31 @@
  */
 package org.apache.kafka.server.util;
 
+import org.apache.kafka.clients.ClientRequest;
+import org.apache.kafka.clients.ClientResponse;
+import org.apache.kafka.clients.KafkaClient;
+import org.apache.kafka.clients.RequestCompletionHandler;
+import org.apache.kafka.common.Node;
+import org.apache.kafka.common.errors.AuthenticationException;
+import org.apache.kafka.common.errors.DisconnectException;
+import org.apache.kafka.common.internals.FatalExitError;
+import org.apache.kafka.common.protocol.ApiKeys;
+import org.apache.kafka.common.requests.AbstractRequest;
+import org.apache.kafka.common.utils.Time;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentMatchers;
+
+import java.io.IOException;
+import java.util.ArrayDeque;
+import java.util.Collection;
+import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -28,30 +53,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
-
-import java.io.IOException;
-import java.util.ArrayDeque;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Queue;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
-
-import org.apache.kafka.clients.ClientRequest;
-import org.apache.kafka.clients.ClientResponse;
-import org.apache.kafka.clients.KafkaClient;
-import org.apache.kafka.clients.RequestCompletionHandler;
-import org.apache.kafka.common.Node;
-import org.apache.kafka.common.errors.AuthenticationException;
-import org.apache.kafka.common.errors.DisconnectException;
-import org.apache.kafka.common.internals.FatalExitError;
-import org.apache.kafka.common.protocol.ApiKeys;
-import org.apache.kafka.common.requests.AbstractRequest;
-import org.apache.kafka.common.utils.Time;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
-import org.mockito.ArgumentMatchers;
 
 public class InterBrokerSendThreadTest {
 
@@ -86,7 +87,7 @@ public class InterBrokerSendThreadTest {
 
         @Override
         public Collection<RequestAndCompletionHandler> generateRequests() {
-            return queue.isEmpty() ? Collections.emptyList() : Collections.singletonList(queue.poll());
+            return queue.isEmpty() ? List.of() : List.of(queue.poll());
         }
 
         @Override
@@ -146,7 +147,7 @@ public class InterBrokerSendThreadTest {
         final InterBrokerSendThread sendThread = new TestInterBrokerSendThread();
 
         // poll is always called but there should be no further invocations on NetworkClient
-        when(networkClient.poll(anyLong(), anyLong())).thenReturn(Collections.emptyList());
+        when(networkClient.poll(anyLong(), anyLong())).thenReturn(List.of());
 
         sendThread.doWork();
 
@@ -178,7 +179,7 @@ public class InterBrokerSendThreadTest {
 
         when(networkClient.ready(node, time.milliseconds())).thenReturn(true);
 
-        when(networkClient.poll(anyLong(), anyLong())).thenReturn(Collections.emptyList());
+        when(networkClient.poll(anyLong(), anyLong())).thenReturn(List.of());
 
         sendThread.enqueue(handler);
         sendThread.doWork();
@@ -223,7 +224,7 @@ public class InterBrokerSendThreadTest {
 
         when(networkClient.connectionDelay(any(), anyLong())).thenReturn(0L);
 
-        when(networkClient.poll(anyLong(), anyLong())).thenReturn(Collections.emptyList());
+        when(networkClient.poll(anyLong(), anyLong())).thenReturn(List.of());
 
         when(networkClient.connectionFailed(node)).thenReturn(true);
 
@@ -277,7 +278,7 @@ public class InterBrokerSendThreadTest {
 
         when(networkClient.connectionDelay(any(), anyLong())).thenReturn(0L);
 
-        when(networkClient.poll(anyLong(), anyLong())).thenReturn(Collections.emptyList());
+        when(networkClient.poll(anyLong(), anyLong())).thenReturn(List.of());
 
         // rule out disconnects so the request stays for the expiry check
         when(networkClient.connectionFailed(node)).thenReturn(false);

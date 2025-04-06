@@ -17,13 +17,14 @@
 
 package org.apache.kafka.image.publisher.metrics;
 
-import com.yammer.metrics.core.Gauge;
-import com.yammer.metrics.core.MetricName;
-import com.yammer.metrics.core.MetricsRegistry;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaYammerMetrics;
 
-import java.util.Arrays;
+import com.yammer.metrics.core.Gauge;
+import com.yammer.metrics.core.MetricName;
+import com.yammer.metrics.core.MetricsRegistry;
+
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -31,9 +32,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * These are the metrics which are managed by the SnapshotEmitter class.
  */
 public final class SnapshotEmitterMetrics implements AutoCloseable {
-    private final static MetricName LATEST_SNAPSHOT_GENERATED_BYTES = getMetricName(
+    private static final MetricName LATEST_SNAPSHOT_GENERATED_BYTES = getMetricName(
         "SnapshotEmitter", "LatestSnapshotGeneratedBytes");
-    private final static MetricName LATEST_SNAPSHOT_GENERATED_AGE_MS = getMetricName(
+    private static final MetricName LATEST_SNAPSHOT_GENERATED_AGE_MS = getMetricName(
         "SnapshotEmitter", "LatestSnapshotGeneratedAgeMs");
 
     private final Optional<MetricsRegistry> registry;
@@ -90,7 +91,7 @@ public final class SnapshotEmitterMetrics implements AutoCloseable {
 
     @Override
     public void close() {
-        registry.ifPresent(r -> Arrays.asList(
+        registry.ifPresent(r -> List.of(
             LATEST_SNAPSHOT_GENERATED_BYTES,
             LATEST_SNAPSHOT_GENERATED_AGE_MS
         ).forEach(r::removeMetric));

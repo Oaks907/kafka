@@ -22,12 +22,11 @@ import org.apache.kafka.image.writer.ImageWriter;
 import org.apache.kafka.image.writer.ImageWriterOptions;
 import org.apache.kafka.metadata.DelegationTokenData;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.ArrayList;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.stream.Collectors;
 
 
 /**
@@ -36,7 +35,7 @@ import java.util.stream.Collectors;
  * This class is thread-safe.
  */
 public final class DelegationTokenImage {
-    public static final DelegationTokenImage EMPTY = new DelegationTokenImage(Collections.emptyMap());
+    public static final DelegationTokenImage EMPTY = new DelegationTokenImage(Map.of());
 
     // Map TokenID to TokenInformation.
     // The TokenID is also contained in the TokenInformation inside the DelegationTokenData
@@ -54,10 +53,8 @@ public final class DelegationTokenImage {
         } else {
             if (!tokens.isEmpty()) {
                 List<String> tokenIds = new ArrayList<>(tokens.keySet());
-                StringBuffer delegationTokenImageString = new StringBuffer("DelegationTokenImage(");
-                delegationTokenImageString.append(tokenIds.stream().collect(Collectors.joining(", ")));
-                delegationTokenImageString.append(")");
-                options.handleLoss(delegationTokenImageString.toString());
+                String delegationTokenImageString = "DelegationTokenImage(" + String.join(", ", tokenIds) + ")";
+                options.handleLoss(delegationTokenImageString);
             } 
         }
     }

@@ -31,7 +31,7 @@ import java.util.Objects;
  * This class is thread-safe.
  */
 public final class MetadataImage {
-    public final static MetadataImage EMPTY = new MetadataImage(
+    public static final MetadataImage EMPTY = new MetadataImage(
         MetadataProvenance.EMPTY,
         FeaturesImage.EMPTY,
         ClusterImage.EMPTY,
@@ -156,7 +156,7 @@ public final class MetadataImage {
         configs.write(writer, options);
         clientQuotas.write(writer, options);
         producerIds.write(writer, options);
-        acls.write(writer, options);
+        acls.write(writer);
         scram.write(writer, options);
         delegationTokens.write(writer, options);
         writer.close(true);

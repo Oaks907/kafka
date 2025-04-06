@@ -68,10 +68,10 @@ abstract class AbstractCreateTopicsRequestTest extends BaseRequestTest {
       topic.setReplicationFactor(1.toShort)
     }
     if (config != null) {
-      val effectiveConfigs = new CreateableTopicConfigCollection()
+      val effectiveConfigs = new CreatableTopicConfigCollection()
       config.foreach {
         case (name, value) =>
-          effectiveConfigs.add(new CreateableTopicConfig().setName(name).setValue(value))
+          effectiveConfigs.add(new CreatableTopicConfig().setName(name).setValue(value))
       }
       topic.setConfigs(effectiveConfigs)
     }
@@ -99,7 +99,7 @@ abstract class AbstractCreateTopicsRequestTest extends BaseRequestTest {
       s"There should be no errors, found ${response.errorCounts().keySet().asScala.mkString(", ")},")
 
     request.data.topics.forEach { topic =>
-      def verifyMetadata(socketServer: SocketServer) = {
+      def verifyMetadata(socketServer: SocketServer): Unit = {
         val metadata = sendMetadataRequest(
           new MetadataRequest.Builder(List(topic.name()).asJava, false).build(), socketServer).topicMetadata.asScala
         val metadataForTopic = metadata.filter(_.topic == topic.name()).head
@@ -137,10 +137,6 @@ abstract class AbstractCreateTopicsRequestTest extends BaseRequestTest {
         }
       }
 
-      if (!isKRaftTest()) {
-        // Verify controller broker has the correct metadata
-        verifyMetadata(controllerSocketServer)
-      }
       if (!request.data.validateOnly) {
         // Wait until metadata is propagated and validate non-controller broker has the correct metadata
         TestUtils.waitForPartitionMetadata(brokers, topic.name(), 0)

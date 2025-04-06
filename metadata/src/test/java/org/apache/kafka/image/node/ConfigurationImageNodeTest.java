@@ -23,10 +23,10 @@ import org.apache.kafka.image.ConfigurationImage;
 import org.apache.kafka.image.node.printer.MetadataNodeRedactionCriteria;
 import org.apache.kafka.image.node.printer.NodeStringifier;
 import org.apache.kafka.metadata.KafkaConfigSchema;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -42,11 +42,11 @@ public class ConfigurationImageNodeTest {
     private static final ConfigurationImageNode NODE;
 
     static {
-        KafkaConfigSchema schema = new KafkaConfigSchema(Collections.singletonMap(BROKER, new ConfigDef().
+        KafkaConfigSchema schema = new KafkaConfigSchema(Map.of(BROKER, new ConfigDef().
             define("non.secret", ConfigDef.Type.STRING, ConfigDef.Importance.HIGH, "baz").
             define("also.non.secret", ConfigDef.Type.STRING, ConfigDef.Importance.HIGH, "baz").
             define("secret.config", ConfigDef.Type.PASSWORD, ConfigDef.Importance.HIGH, "baz")),
-                Collections.emptyMap());
+                Map.of());
         NORMAL = new MetadataNodeRedactionCriteria.Normal(schema);
 
         Map<String, String> configs = new HashMap<>();

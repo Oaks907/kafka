@@ -19,7 +19,7 @@ package org.apache.kafka.clients.consumer.internals;
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.GroupRebalanceConfig;
 import org.apache.kafka.clients.MockClient;
-import org.apache.kafka.clients.consumer.OffsetResetStrategy;
+import org.apache.kafka.clients.consumer.CloseOptions;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.DisconnectException;
@@ -58,8 +58,12 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Timer;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.test.TestUtils;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -74,6 +78,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import static java.util.Collections.emptyMap;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -85,6 +91,8 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 public class AbstractCoordinatorTest {
     private static final ByteBuffer EMPTY_DATA = ByteBuffer.wrap(new byte[0]);
@@ -119,19 +127,24 @@ public class AbstractCoordinatorTest {
 
     private void setupCoordinator() {
         setupCoordinator(RETRY_BACKOFF_MS, RETRY_BACKOFF_MAX_MS, REBALANCE_TIMEOUT_MS,
-            Optional.empty());
+            Optional.empty(), Optional.empty());
     }
 
     private void setupCoordinator(int retryBackoffMs, int retryBackoffMaxMs) {
         setupCoordinator(retryBackoffMs, retryBackoffMaxMs, REBALANCE_TIMEOUT_MS,
-            Optional.empty());
+            Optional.empty(), Optional.empty());
     }
 
-    private void setupCoordinator(int retryBackoffMs, int retryBackoffMaxMs, int rebalanceTimeoutMs, Optional<String> groupInstanceId) {
+
+    private void setupCoordinator(int retryBackoffMs, int retryBackoffMaxMs, int rebalanceTimeoutMs, Optional<String> groupInstanceId, Optional<Supplier<BaseHeartbeatThread>> heartbeatThreadSupplier) {
+        setupCoordinator(retryBackoffMs, retryBackoffMaxMs, rebalanceTimeoutMs, groupInstanceId, heartbeatThreadSupplier, groupInstanceId.isEmpty());
+    }
+
+    private void setupCoordinator(int retryBackoffMs, int retryBackoffMaxMs, int rebalanceTimeoutMs, Optional<String> groupInstanceId, Optional<Supplier<BaseHeartbeatThread>> heartbeatThreadSupplier, boolean leaveOnClose) {
         LogContext logContext = new LogContext();
         this.mockTime = new MockTime();
         ConsumerMetadata metadata = new ConsumerMetadata(retryBackoffMs, retryBackoffMaxMs, 60 * 60 * 1000L,
-                false, false, new SubscriptionState(logContext, OffsetResetStrategy.EARLIEST),
+                false, false, new SubscriptionState(logContext, AutoOffsetResetStrategy.EARLIEST),
                 logContext, new ClusterResourceListeners());
 
         this.mockClient = new MockClient(mockTime, metadata);
@@ -155,11 +168,12 @@ public class AbstractCoordinatorTest {
                                                                         groupInstanceId,
                                                                         retryBackoffMs,
                                                                         retryBackoffMaxMs,
-                                                                        !groupInstanceId.isPresent());
+                                                                        leaveOnClose);
         this.coordinator = new DummyCoordinator(rebalanceConfig,
                                                 consumerClient,
                                                 metrics,
-                                                mockTime);
+                                                mockTime,
+                                                heartbeatThreadSupplier);
     }
 
     private void joinGroup() {
@@ -299,9 +313,9 @@ public class AbstractCoordinatorTest {
         coordinator.ensureCoordinatorReadyAsync();
 
         // But should wakeup in sync variation even if timer is 0.
-        assertThrows(WakeupException.class, () -> {
-            coordinator.ensureCoordinatorReady(mockTime.timer(0));
-        });
+        assertThrows(WakeupException.class, () ->
+            coordinator.ensureCoordinatorReady(mockTime.timer(0))
+        );
     }
 
     @Test
@@ -348,8 +362,7 @@ public class AbstractCoordinatorTest {
 
     @Test
     public void testJoinGroupRequestTimeout() {
-        setupCoordinator(RETRY_BACKOFF_MS, RETRY_BACKOFF_MAX_MS, REBALANCE_TIMEOUT_MS,
-            Optional.empty());
+        setupCoordinator();
         mockClient.prepareResponse(groupCoordinatorResponse(node, Errors.NONE));
         coordinator.ensureCoordinatorReady(mockTime.timer(0));
 
@@ -366,7 +379,7 @@ public class AbstractCoordinatorTest {
     @Test
     public void testJoinGroupRequestTimeoutLowerBoundedByDefaultRequestTimeout() {
         int rebalanceTimeoutMs = REQUEST_TIMEOUT_MS - 10000;
-        setupCoordinator(RETRY_BACKOFF_MS, RETRY_BACKOFF_MAX_MS, rebalanceTimeoutMs, Optional.empty());
+        setupCoordinator(RETRY_BACKOFF_MS, RETRY_BACKOFF_MAX_MS, rebalanceTimeoutMs, Optional.empty(), Optional.empty());
         mockClient.prepareResponse(groupCoordinatorResponse(node, Errors.NONE));
         coordinator.ensureCoordinatorReady(mockTime.timer(0));
 
@@ -386,7 +399,7 @@ public class AbstractCoordinatorTest {
         // Ensure we can handle the maximum allowed rebalance timeout
 
         setupCoordinator(RETRY_BACKOFF_MS, RETRY_BACKOFF_MAX_MS, Integer.MAX_VALUE,
-            Optional.empty());
+            Optional.empty(), Optional.empty());
         mockClient.prepareResponse(groupCoordinatorResponse(node, Errors.NONE));
         coordinator.ensureCoordinatorReady(mockTime.timer(0));
 
@@ -1018,7 +1031,7 @@ public class AbstractCoordinatorTest {
     }
 
     @Test
-    public void testHeartbeatRequestWithFencedInstanceIdException() throws InterruptedException {
+    public void testHeartbeatRequestWithFencedInstanceIdException() {
         setupCoordinator();
         mockClient.prepareResponse(groupCoordinatorResponse(node, Errors.NONE));
 
@@ -1092,8 +1105,29 @@ public class AbstractCoordinatorTest {
         checkLeaveGroupRequestSent(Optional.of("groupInstanceId"));
     }
 
-    private void checkLeaveGroupRequestSent(Optional<String> groupInstanceId) {
-        setupCoordinator(RETRY_BACKOFF_MS, RETRY_BACKOFF_MAX_MS, Integer.MAX_VALUE, groupInstanceId);
+    @ParameterizedTest
+    @MethodSource("groupInstanceIdAndMembershipOperationMatrix")
+    public void testLeaveGroupSentWithGroupInstanceIdUnSetAndDifferentGroupMembershipOperation(Optional<String> groupInstanceId, CloseOptions.GroupMembershipOperation operation) {
+        checkLeaveGroupRequestSent(groupInstanceId, operation, Optional.empty(), true);
+    }
+
+    private static Stream<Arguments> groupInstanceIdAndMembershipOperationMatrix() {
+        return Stream.of(
+            Arguments.of(Optional.empty(), CloseOptions.GroupMembershipOperation.DEFAULT),
+            Arguments.of(Optional.empty(), CloseOptions.GroupMembershipOperation.LEAVE_GROUP),
+            Arguments.of(Optional.empty(), CloseOptions.GroupMembershipOperation.REMAIN_IN_GROUP),
+            Arguments.of(Optional.of("groupInstanceId"), CloseOptions.GroupMembershipOperation.DEFAULT),
+            Arguments.of(Optional.of("groupInstanceId"), CloseOptions.GroupMembershipOperation.LEAVE_GROUP),
+            Arguments.of(Optional.of("groupInstanceId"), CloseOptions.GroupMembershipOperation.REMAIN_IN_GROUP)
+        );
+    }
+
+    private void checkLeaveGroupRequestSent(Optional<String> groupInstanceId)  {
+        checkLeaveGroupRequestSent(groupInstanceId, CloseOptions.GroupMembershipOperation.DEFAULT, Optional.empty(), groupInstanceId.isEmpty());
+    }
+
+    private void checkLeaveGroupRequestSent(Optional<String> groupInstanceId, CloseOptions.GroupMembershipOperation operation, Optional<Supplier<BaseHeartbeatThread>> heartbeatThreadSupplier, boolean leaveOnClose) {
+        setupCoordinator(RETRY_BACKOFF_MS, RETRY_BACKOFF_MAX_MS, Integer.MAX_VALUE, groupInstanceId, heartbeatThreadSupplier, leaveOnClose);
 
         mockClient.prepareResponse(groupCoordinatorResponse(node, Errors.NONE));
         mockClient.prepareResponse(joinGroupFollowerResponse(1, memberId, leaderId, Errors.NONE));
@@ -1110,12 +1144,13 @@ public class AbstractCoordinatorTest {
 
         try {
             coordinator.ensureActiveGroup();
-            coordinator.close();
-            if (coordinator.isDynamicMember()) {
+            coordinator.close(new MockTime().timer(0), operation);
+            if (CloseOptions.GroupMembershipOperation.LEAVE_GROUP == operation ||
+                (CloseOptions.GroupMembershipOperation.DEFAULT == operation && coordinator.isDynamicMember())) {
                 fail("Expected leavegroup to raise an error.");
             }
         } catch (RuntimeException exception) {
-            if (coordinator.isDynamicMember()) {
+            if (CloseOptions.GroupMembershipOperation.LEAVE_GROUP == operation || coordinator.isDynamicMember()) {
                 assertEquals(exception, e);
             } else {
                 fail("Coordinator with group.instance.id set shouldn't send leave group request.");
@@ -1188,7 +1223,7 @@ public class AbstractCoordinatorTest {
     private RequestFuture<Void> setupLeaveGroup(LeaveGroupResponse leaveGroupResponse,
                                                 String leaveReason,
                                                 String expectedLeaveReason) {
-        setupCoordinator(RETRY_BACKOFF_MS, RETRY_BACKOFF_MAX_MS, Integer.MAX_VALUE, Optional.empty());
+        setupCoordinator(RETRY_BACKOFF_MS, RETRY_BACKOFF_MAX_MS, Integer.MAX_VALUE, Optional.empty(), Optional.empty());
 
         mockClient.prepareResponse(groupCoordinatorResponse(node, Errors.NONE));
         mockClient.prepareResponse(joinGroupFollowerResponse(1, memberId, leaderId, Errors.NONE));
@@ -1203,7 +1238,7 @@ public class AbstractCoordinatorTest {
         }, leaveGroupResponse);
 
         coordinator.ensureActiveGroup();
-        return coordinator.maybeLeaveGroup(leaveReason);
+        return coordinator.maybeLeaveGroup(CloseOptions.GroupMembershipOperation.DEFAULT, leaveReason);
     }
 
     @Test
@@ -1418,11 +1453,7 @@ public class AbstractCoordinatorTest {
         mockClient.prepareResponse(syncGroupResponse(Errors.NONE));
         AtomicBoolean heartbeatReceived = prepareFirstHeartbeat();
 
-        try {
-            coordinator.ensureActiveGroup();
-            fail("Should have woken up from ensureActiveGroup()");
-        } catch (WakeupException e) {
-        }
+        assertThrows(WakeupException.class, () -> coordinator.ensureActiveGroup(), "Should have woken up from ensureActiveGroup()");
 
         assertEquals(1, coordinator.onJoinPrepareInvokes);
         assertEquals(0, coordinator.onJoinCompleteInvokes);
@@ -1440,7 +1471,8 @@ public class AbstractCoordinatorTest {
 
     @Test
     public void testWakeupAfterSyncGroupSentExternalCompletion() throws Exception {
-        setupCoordinator();
+        setupCoordinator(RETRY_BACKOFF_MS, RETRY_BACKOFF_MAX_MS, REBALANCE_TIMEOUT_MS,
+            Optional.empty(), Optional.of(() -> mock(BaseHeartbeatThread.class)));
 
         mockClient.prepareResponse(groupCoordinatorResponse(node, Errors.NONE));
         mockClient.prepareResponse(joinGroupFollowerResponse(1, memberId, leaderId, Errors.NONE));
@@ -1456,17 +1488,13 @@ public class AbstractCoordinatorTest {
                 return isSyncGroupRequest;
             }
         }, syncGroupResponse(Errors.NONE));
-        AtomicBoolean heartbeatReceived = prepareFirstHeartbeat();
 
-        try {
-            coordinator.ensureActiveGroup();
-            fail("Should have woken up from ensureActiveGroup()");
-        } catch (WakeupException e) {
-        }
+        assertThrows(WakeupException.class, () -> coordinator.ensureActiveGroup(), "Should have woken up from ensureActiveGroup()");
 
         assertEquals(1, coordinator.onJoinPrepareInvokes);
         assertEquals(0, coordinator.onJoinCompleteInvokes);
-        assertFalse(heartbeatReceived.get());
+        assertNotNull(coordinator.heartbeatThread());
+        verify(coordinator.heartbeatThread()).enable();
 
         // the join group completes in this poll()
         consumerClient.poll(mockTime.timer(0));
@@ -1474,13 +1502,12 @@ public class AbstractCoordinatorTest {
 
         assertEquals(1, coordinator.onJoinPrepareInvokes);
         assertEquals(1, coordinator.onJoinCompleteInvokes);
-
-        awaitFirstHeartbeat(heartbeatReceived);
     }
 
     @Test
     public void testWakeupAfterSyncGroupReceived() throws Exception {
-        setupCoordinator();
+        setupCoordinator(RETRY_BACKOFF_MS, RETRY_BACKOFF_MAX_MS, REBALANCE_TIMEOUT_MS,
+            Optional.empty(), Optional.of(() -> mock(BaseHeartbeatThread.class)));
 
         mockClient.prepareResponse(groupCoordinatorResponse(node, Errors.NONE));
         mockClient.prepareResponse(joinGroupFollowerResponse(1, memberId, leaderId, Errors.NONE));
@@ -1491,7 +1518,6 @@ public class AbstractCoordinatorTest {
                 consumerClient.wakeup();
             return isSyncGroupRequest;
         }, syncGroupResponse(Errors.NONE));
-        AtomicBoolean heartbeatReceived = prepareFirstHeartbeat();
 
         try {
             coordinator.ensureActiveGroup();
@@ -1501,19 +1527,19 @@ public class AbstractCoordinatorTest {
 
         assertEquals(1, coordinator.onJoinPrepareInvokes);
         assertEquals(0, coordinator.onJoinCompleteInvokes);
-        assertFalse(heartbeatReceived.get());
+        assertNotNull(coordinator.heartbeatThread());
+        verify(coordinator.heartbeatThread()).enable();
 
         coordinator.ensureActiveGroup();
 
         assertEquals(1, coordinator.onJoinPrepareInvokes);
         assertEquals(1, coordinator.onJoinCompleteInvokes);
-
-        awaitFirstHeartbeat(heartbeatReceived);
     }
 
     @Test
     public void testWakeupAfterSyncGroupReceivedExternalCompletion() throws Exception {
-        setupCoordinator();
+        setupCoordinator(RETRY_BACKOFF_MS, RETRY_BACKOFF_MAX_MS, REBALANCE_TIMEOUT_MS,
+            Optional.empty(), Optional.of(() -> mock(BaseHeartbeatThread.class)));
 
         mockClient.prepareResponse(groupCoordinatorResponse(node, Errors.NONE));
         mockClient.prepareResponse(joinGroupFollowerResponse(1, memberId, leaderId, Errors.NONE));
@@ -1524,24 +1550,18 @@ public class AbstractCoordinatorTest {
                 consumerClient.wakeup();
             return isSyncGroupRequest;
         }, syncGroupResponse(Errors.NONE));
-        AtomicBoolean heartbeatReceived = prepareFirstHeartbeat();
 
-        try {
-            coordinator.ensureActiveGroup();
-            fail("Should have woken up from ensureActiveGroup()");
-        } catch (WakeupException e) {
-        }
+        assertThrows(WakeupException.class, () -> coordinator.ensureActiveGroup(), "Should have woken up from ensureActiveGroup()");
 
         assertEquals(1, coordinator.onJoinPrepareInvokes);
         assertEquals(0, coordinator.onJoinCompleteInvokes);
-        assertFalse(heartbeatReceived.get());
+        assertNotNull(coordinator.heartbeatThread());
+        verify(coordinator.heartbeatThread()).enable();
 
         coordinator.ensureActiveGroup();
 
         assertEquals(1, coordinator.onJoinPrepareInvokes);
         assertEquals(1, coordinator.onJoinCompleteInvokes);
-
-        awaitFirstHeartbeat(heartbeatReceived);
     }
 
     @Test
@@ -1715,8 +1735,9 @@ public class AbstractCoordinatorTest {
         DummyCoordinator(GroupRebalanceConfig rebalanceConfig,
                          ConsumerNetworkClient client,
                          Metrics metrics,
-                         Time time) {
-            super(rebalanceConfig, new LogContext(), client, metrics, METRIC_GROUP_PREFIX, time);
+                         Time time,
+                         Optional<Supplier<BaseHeartbeatThread>> heartbeatThreadSupplier) {
+            super(rebalanceConfig, new LogContext(), client, metrics, METRIC_GROUP_PREFIX, time, Optional.empty(), heartbeatThreadSupplier);
         }
 
         @Override
@@ -1758,5 +1779,4 @@ public class AbstractCoordinatorTest {
             onJoinCompleteInvokes++;
         }
     }
-
 }

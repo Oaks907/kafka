@@ -22,11 +22,12 @@ import org.apache.kafka.common.metadata.RemoveUserScramCredentialRecord;
 import org.apache.kafka.common.metadata.UserScramCredentialRecord;
 import org.apache.kafka.image.writer.ImageWriterOptions;
 import org.apache.kafka.image.writer.RecordListWriter;
-import org.apache.kafka.server.common.MetadataVersion;
-import org.apache.kafka.server.util.MockRandom;
 import org.apache.kafka.metadata.RecordTestUtils;
 import org.apache.kafka.metadata.ScramCredentialData;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
+import org.apache.kafka.server.common.MetadataVersion;
+import org.apache.kafka.server.util.MockRandom;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -40,18 +41,18 @@ import java.util.Random;
 import static org.apache.kafka.clients.admin.ScramMechanism.SCRAM_SHA_256;
 import static org.apache.kafka.clients.admin.ScramMechanism.SCRAM_SHA_512;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 
 @Timeout(value = 40)
 public class ScramImageTest {
-    public final static ScramImage IMAGE1;
+    public static final ScramImage IMAGE1;
 
-    public final static List<ApiMessageAndVersion> DELTA1_RECORDS;
+    public static final List<ApiMessageAndVersion> DELTA1_RECORDS;
 
-    final static ScramDelta DELTA1;
+    static final ScramDelta DELTA1;
 
-    final static ScramImage IMAGE2;
+    static final ScramImage IMAGE2;
 
     static byte[] randomBuffer(Random random, int length) {
         byte[] buf = new byte[length];
@@ -169,28 +170,22 @@ public class ScramImageTest {
 
     private static List<ApiMessageAndVersion> getImageRecords(ScramImage image) {
         RecordListWriter writer = new RecordListWriter();
-        image.write(writer, new ImageWriterOptions.Builder().build());
+        image.write(writer, new ImageWriterOptions.Builder(MetadataVersion.latestProduction()).build());
         return writer.records();
     }
 
     @Test
     public void testEmptyWithInvalidIBP() {
-        ImageWriterOptions imageWriterOptions = new ImageWriterOptions.Builder().
-                setMetadataVersion(MetadataVersion.IBP_3_4_IV0).build();
+        ImageWriterOptions imageWriterOptions = new ImageWriterOptions.Builder(MetadataVersion.IBP_3_4_IV0).build();
         RecordListWriter writer = new RecordListWriter();
         ScramImage.EMPTY.write(writer, imageWriterOptions);
     }
 
     @Test
     public void testImage1withInvalidIBP() {
-        ImageWriterOptions imageWriterOptions = new ImageWriterOptions.Builder().
-                setMetadataVersion(MetadataVersion.IBP_3_4_IV0).build();
+        ImageWriterOptions imageWriterOptions = new ImageWriterOptions.Builder(MetadataVersion.IBP_3_4_IV0).build();
         RecordListWriter writer = new RecordListWriter();
-        try {
-            IMAGE1.write(writer, imageWriterOptions);
-            fail("expected exception writing IMAGE with SCRAM records for MetadataVersion.IBP_3_4_IV0");
-        } catch (Exception expected) {
-            // ignore, expected
-        }
+        assertThrows(Exception.class, () -> IMAGE1.write(writer, imageWriterOptions),
+            "expected exception writing IMAGE with SCRAM records for MetadataVersion.IBP_3_4_IV0");
     }
 }

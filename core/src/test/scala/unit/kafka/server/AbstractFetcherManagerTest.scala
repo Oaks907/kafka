@@ -17,9 +17,7 @@
 package kafka.server
 
 import com.yammer.metrics.core.Gauge
-import kafka.cluster.BrokerEndPoint
 import kafka.server.AbstractFetcherThread.{ReplicaFetch, ResultWithPartitions}
-import kafka.utils.Implicits.MapExtensionMethods
 import kafka.utils.TestUtils
 import org.apache.kafka.common.message.FetchResponseData.PartitionData
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
@@ -28,7 +26,9 @@ import org.apache.kafka.common.utils.Utils
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.server.common.OffsetAndEpoch
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
+import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.storage.internals.log.LogAppendInfo
+import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{BeforeEach, Test}
 import org.mockito.Mockito.{mock, verify, when}
@@ -73,7 +73,7 @@ class AbstractFetcherManagerTest {
     when(fetcher.addPartitions(Map(tp -> initialFetchState)))
       .thenReturn(Set(tp))
     when(fetcher.fetchState(tp))
-      .thenReturn(Some(PartitionFetchState(topicId, fetchOffset, None, leaderEpoch, Truncating, lastFetchedEpoch = None)))
+      .thenReturn(Some(PartitionFetchState(topicId, fetchOffset, None, leaderEpoch, Truncating, lastFetchedEpoch = Optional.empty)))
       .thenReturn(None)
     when(fetcher.removePartitions(Set(tp))).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
 
@@ -185,11 +185,11 @@ class AbstractFetcherManagerTest {
       .thenReturn(Set(tp2))
 
     when(fetcher.fetchState(tp1))
-      .thenReturn(Some(PartitionFetchState(None, fetchOffset, None, leaderEpoch, Truncating, lastFetchedEpoch = None)))
-      .thenReturn(Some(PartitionFetchState(topicId1, fetchOffset, None, leaderEpoch, Truncating, lastFetchedEpoch = None)))
+      .thenReturn(Some(PartitionFetchState(None, fetchOffset, None, leaderEpoch, Truncating, lastFetchedEpoch = Optional.empty)))
+      .thenReturn(Some(PartitionFetchState(topicId1, fetchOffset, None, leaderEpoch, Truncating, lastFetchedEpoch = Optional.empty)))
     when(fetcher.fetchState(tp2))
-      .thenReturn(Some(PartitionFetchState(None, fetchOffset, None, leaderEpoch, Truncating, lastFetchedEpoch = None)))
-      .thenReturn(Some(PartitionFetchState(topicId2, fetchOffset, None, leaderEpoch, Truncating, lastFetchedEpoch = None)))
+      .thenReturn(Some(PartitionFetchState(None, fetchOffset, None, leaderEpoch, Truncating, lastFetchedEpoch = Optional.empty)))
+      .thenReturn(Some(PartitionFetchState(topicId2, fetchOffset, None, leaderEpoch, Truncating, lastFetchedEpoch = Optional.empty)))
 
     val topicIds = Map(tp1.topic -> topicId1, tp2.topic -> topicId2)
 
@@ -255,7 +255,7 @@ class AbstractFetcherManagerTest {
       fetcherManager.resizeThreadPool(newFetcherSize)
 
       val ownedPartitions = mutable.Set.empty[TopicPartition]
-      fetcherManager.fetcherThreadMap.forKeyValue { (brokerIdAndFetcherId, fetcherThread) =>
+      fetcherManager.fetcherThreadMap.foreachEntry { (brokerIdAndFetcherId, fetcherThread) =>
         val fetcherId = brokerIdAndFetcherId.fetcherId
         val brokerId = brokerIdAndFetcherId.brokerId
 
@@ -313,12 +313,10 @@ class AbstractFetcherManagerTest {
     override def fetchEarliestLocalOffset(topicPartition: TopicPartition, currentLeaderEpoch: Int): OffsetAndEpoch = new OffsetAndEpoch(1L, 0)
   }
 
-  private class MockResizeFetcherTierStateMachine extends TierStateMachine {
+  private class MockResizeFetcherTierStateMachine extends TierStateMachine(null, null, false) {
     override def start(topicPartition: TopicPartition, currentFetchState: PartitionFetchState, fetchPartitionData: PartitionData): PartitionFetchState = {
       throw new UnsupportedOperationException("Materializing tier state is not supported in this test.")
     }
-
-    override def maybeAdvanceState(tp: TopicPartition, currentFetchState: PartitionFetchState): Optional[PartitionFetchState] = Optional.empty[PartitionFetchState]
   }
 
   private class TestResizeFetcherThread(sourceBroker: BrokerEndPoint, failedPartitions: FailedPartitions, fetchTierStateMachine: TierStateMachine)
@@ -331,23 +329,24 @@ class AbstractFetcherManagerTest {
       fetchBackOffMs = 0,
       brokerTopicStats = new BrokerTopicStats) {
 
-    override protected def processPartitionData(topicPartition: TopicPartition, fetchOffset: Long, partitionData: FetchData): Option[LogAppendInfo] = {
-      None
-    }
+    override protected def processPartitionData(
+      topicPartition: TopicPartition,
+      fetchOffset: Long,
+      partitionLeaderEpoch: Int,
+      partitionData: FetchData
+    ): Option[LogAppendInfo] = None
 
     override protected def truncate(topicPartition: TopicPartition, truncationState: OffsetTruncationState): Unit = {}
 
     override protected def truncateFullyAndStartAt(topicPartition: TopicPartition, offset: Long): Unit = {}
 
-    override protected def latestEpoch(topicPartition: TopicPartition): Option[Int] = Some(0)
+    override protected def latestEpoch(topicPartition: TopicPartition): Optional[Integer] = Optional.of(0)
 
     override protected def logStartOffset(topicPartition: TopicPartition): Long = 1
 
     override protected def logEndOffset(topicPartition: TopicPartition): Long = 1
 
-    override protected def endOffsetForEpoch(topicPartition: TopicPartition, epoch: Int): Option[OffsetAndEpoch] = Some(new OffsetAndEpoch(1, 0))
-
-    override protected val isOffsetForLeaderEpochSupported: Boolean = false
+    override protected def endOffsetForEpoch(topicPartition: TopicPartition, epoch: Int): Optional[OffsetAndEpoch] = Optional.of(new OffsetAndEpoch(1, 0))
   }
 
 }

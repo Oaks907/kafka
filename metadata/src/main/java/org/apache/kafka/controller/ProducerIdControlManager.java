@@ -25,9 +25,10 @@ import org.apache.kafka.server.common.ProducerIdsBlock;
 import org.apache.kafka.timeline.SnapshotRegistry;
 import org.apache.kafka.timeline.TimelineLong;
 import org.apache.kafka.timeline.TimelineObject;
+
 import org.slf4j.Logger;
 
-import java.util.Collections;
+import java.util.List;
 
 
 public class ProducerIdControlManager {
@@ -96,7 +97,7 @@ public class ProducerIdControlManager {
             .setNextProducerId(newNextProducerId)
             .setBrokerId(brokerId)
             .setBrokerEpoch(brokerEpoch);
-        return ControllerResult.of(Collections.singletonList(new ApiMessageAndVersion(record, (short) 0)), block);
+        return ControllerResult.of(List.of(new ApiMessageAndVersion(record, (short) 0)), block);
     }
 
     // VisibleForTesting

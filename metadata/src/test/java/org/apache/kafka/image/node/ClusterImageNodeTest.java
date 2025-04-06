@@ -18,10 +18,11 @@
 package org.apache.kafka.image.node;
 
 import org.apache.kafka.image.ClusterImage;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import java.util.Arrays;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -30,11 +31,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 @Timeout(value = 40)
 public class ClusterImageNodeTest {
-    private final static ClusterImageNode NODE = new ClusterImageNode(ClusterImage.EMPTY);
+    private static final ClusterImageNode NODE = new ClusterImageNode(ClusterImage.EMPTY);
 
     @Test
     public void testChildNames() {
-        assertEquals(Arrays.asList("brokers", "controllers"), NODE.childNames());
+        assertEquals(List.of("brokers", "controllers"), NODE.childNames());
     }
 
     @Test

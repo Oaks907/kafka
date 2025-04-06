@@ -20,6 +20,7 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.Record;
 import org.apache.kafka.storage.internals.log.LogFileUtils;
+
 import org.slf4j.Logger;
 
 import java.io.File;
@@ -218,7 +219,7 @@ public final class RemoteLogSegmentFileset {
     public List<Record> getRecords() throws IOException {
         return StreamSupport
                 .stream(FileRecords.open(files.get(SEGMENT)).records().spliterator(), false)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     public void copy(final Transferer transferer, final LogSegmentData data) throws IOException {

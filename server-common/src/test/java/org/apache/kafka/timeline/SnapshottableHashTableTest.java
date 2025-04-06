@@ -17,24 +17,24 @@
 
 package org.apache.kafka.timeline;
 
+import org.apache.kafka.common.utils.LogContext;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import org.apache.kafka.common.utils.LogContext;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 
 @Timeout(value = 40)
 public class SnapshottableHashTableTest {
@@ -73,10 +73,9 @@ public class SnapshottableHashTableTest {
 
         @Override
         public boolean equals(Object o) {
-            if (!(o instanceof TestElement)) {
+            if (!(o instanceof TestElement other)) {
                 return false;
             }
-            TestElement other = (TestElement) o;
             return other.i == i;
         }
 
@@ -270,7 +269,7 @@ public class SnapshottableHashTableTest {
 
         registry.reset();
 
-        assertEquals(Collections.emptyList(), registry.epochsList());
+        assertEquals(List.of(), registry.epochsList());
         // Check that the table is empty
         assertIteratorYields(table.snapshottableIterator(Long.MAX_VALUE));
     }

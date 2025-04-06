@@ -22,9 +22,9 @@ import org.apache.kafka.common.message.FetchResponseData
 
 import java.util.Optional
 
-class MockTierStateMachine(leader: LeaderEndPoint) extends ReplicaFetcherTierStateMachine(leader, null) {
+class MockTierStateMachine(leader: LeaderEndPoint) extends TierStateMachine(leader, null, false) {
 
-  var fetcher: MockFetcherThread = null
+  var fetcher: MockFetcherThread = _
 
   override def start(topicPartition: TopicPartition,
                      currentFetchState: PartitionFetchState,
@@ -34,12 +34,7 @@ class MockTierStateMachine(leader: LeaderEndPoint) extends ReplicaFetcherTierSta
     val initialLag = leaderEndOffset - offsetToFetch
     fetcher.truncateFullyAndStartAt(topicPartition, offsetToFetch)
     PartitionFetchState(currentFetchState.topicId, offsetToFetch, Option.apply(initialLag), currentFetchState.currentLeaderEpoch,
-      Fetching, Some(currentFetchState.currentLeaderEpoch))
-  }
-
-  override def maybeAdvanceState(topicPartition: TopicPartition,
-                                 currentFetchState: PartitionFetchState): Optional[PartitionFetchState] = {
-    Optional.of(currentFetchState)
+      Fetching, Optional.of(currentFetchState.currentLeaderEpoch))
   }
 
   def setFetcher(mockFetcherThread: MockFetcherThread): Unit = {

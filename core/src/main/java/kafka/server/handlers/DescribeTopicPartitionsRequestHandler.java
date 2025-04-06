@@ -20,7 +20,7 @@ package kafka.server.handlers;
 import kafka.network.RequestChannel;
 import kafka.server.AuthHelper;
 import kafka.server.KafkaConfig;
-import kafka.server.metadata.KRaftMetadataCache;
+
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.message.DescribeTopicPartitionsRequestData;
@@ -30,7 +30,7 @@ import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.Descr
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.DescribeTopicPartitionsRequest;
 import org.apache.kafka.common.resource.Resource;
-import scala.collection.JavaConverters;
+import org.apache.kafka.metadata.MetadataCache;
 
 import java.util.Collections;
 import java.util.HashSet;
@@ -42,12 +42,12 @@ import static org.apache.kafka.common.acl.AclOperation.DESCRIBE;
 import static org.apache.kafka.common.resource.ResourceType.TOPIC;
 
 public class DescribeTopicPartitionsRequestHandler {
-    KRaftMetadataCache metadataCache;
+    MetadataCache metadataCache;
     AuthHelper authHelper;
     KafkaConfig config;
 
     public DescribeTopicPartitionsRequestHandler(
-        KRaftMetadataCache metadataCache,
+        MetadataCache metadataCache,
         AuthHelper authHelper,
         KafkaConfig config
     ) {
@@ -63,7 +63,7 @@ public class DescribeTopicPartitionsRequestHandler {
         DescribeTopicPartitionsRequestData.Cursor cursor = request.cursor();
         String cursorTopicName = cursor != null ? cursor.topicName() : "";
         if (fetchAllTopics) {
-            JavaConverters.asJavaCollection(metadataCache.getAllTopics()).forEach(topicName -> {
+            metadataCache.getAllTopics().forEach(topicName -> {
                 if (topicName.compareTo(cursorTopicName) >= 0) {
                     topics.add(topicName);
                 }
@@ -102,8 +102,8 @@ public class DescribeTopicPartitionsRequestHandler {
             return isAuthorized;
         });
 
-        DescribeTopicPartitionsResponseData response = metadataCache.getTopicMetadataForDescribeTopicResponse(
-            JavaConverters.asScalaIterator(authorizedTopicsStream.iterator()),
+        DescribeTopicPartitionsResponseData response = metadataCache.describeTopicResponse(
+            authorizedTopicsStream.iterator(),
             abstractRequest.context().listenerName,
             (String topicName) -> topicName.equals(cursorTopicName) ? cursor.partitionIndex() : 0,
             Math.max(Math.min(config.maxRequestPartitionSizeLimit(), request.responsePartitionLimit()), 1),

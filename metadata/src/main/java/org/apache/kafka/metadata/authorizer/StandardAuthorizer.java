@@ -31,7 +31,6 @@ import org.apache.kafka.server.authorizer.AuthorizerServerInfo;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -49,9 +48,9 @@ import static org.apache.kafka.server.authorizer.AuthorizationResult.DENIED;
  * configured.
  */
 public class StandardAuthorizer implements ClusterMetadataAuthorizer {
-    public final static String SUPER_USERS_CONFIG = "super.users";
+    public static final String SUPER_USERS_CONFIG = "super.users";
 
-    public final static String ALLOW_EVERYONE_IF_NO_ACL_IS_FOUND_CONFIG = "allow.everyone.if.no.acl.found";
+    public static final String ALLOW_EVERYONE_IF_NO_ACL_IS_FOUND_CONFIG = "allow.everyone.if.no.acl.found";
 
     /**
      * A future which is completed once we have loaded up to the initial high watermark.
@@ -190,7 +189,7 @@ public class StandardAuthorizer implements ClusterMetadataAuthorizer {
 
     static Set<String> getConfiguredSuperUsers(Map<String, ?> configs) {
         Object configValue = configs.get(SUPER_USERS_CONFIG);
-        if (configValue == null) return Collections.emptySet();
+        if (configValue == null) return Set.of();
         String[] values = configValue.toString().split(";");
         Set<String> result = new HashSet<>();
         for (String value : values) {

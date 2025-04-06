@@ -18,13 +18,12 @@ package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.message.DeleteTopicsRequestData;
+import org.apache.kafka.common.message.DeleteTopicsRequestData.DeleteTopicState;
 import org.apache.kafka.common.message.DeleteTopicsResponseData;
 import org.apache.kafka.common.message.DeleteTopicsResponseData.DeletableTopicResult;
-import org.apache.kafka.common.message.DeleteTopicsRequestData.DeleteTopicState;
 import org.apache.kafka.common.protocol.ApiKeys;
-import org.apache.kafka.common.protocol.ByteBufferAccessor;
+import org.apache.kafka.common.protocol.Readable;
 
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -92,7 +91,7 @@ public class DeleteTopicsRequest extends AbstractRequest {
     
     public List<String> topicNames() {
         if (version() >= 6)
-            return data.topics().stream().map(topic -> topic.name()).collect(Collectors.toList());
+            return data.topics().stream().map(DeleteTopicState::name).collect(Collectors.toList());
         return data.topicNames(); 
     }
 
@@ -104,7 +103,7 @@ public class DeleteTopicsRequest extends AbstractRequest {
     
     public List<Uuid> topicIds() {
         if (version() >= 6)
-            return data.topics().stream().map(topic -> topic.topicId()).collect(Collectors.toList());
+            return data.topics().stream().map(DeleteTopicState::topicId).collect(Collectors.toList());
         return Collections.emptyList();
     }
     
@@ -114,8 +113,8 @@ public class DeleteTopicsRequest extends AbstractRequest {
         return data.topicNames().stream().map(name -> new DeleteTopicState().setName(name)).collect(Collectors.toList()); 
     }
 
-    public static DeleteTopicsRequest parse(ByteBuffer buffer, short version) {
-        return new DeleteTopicsRequest(new DeleteTopicsRequestData(new ByteBufferAccessor(buffer), version), version);
+    public static DeleteTopicsRequest parse(Readable readable, short version) {
+        return new DeleteTopicsRequest(new DeleteTopicsRequestData(readable, version), version);
     }
 
 }

@@ -40,6 +40,7 @@ import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.provider.MockFileConfigProvider;
 import org.apache.kafka.common.errors.ClusterAuthorizationException;
 import org.apache.kafka.common.internals.KafkaFutureImpl;
+import org.apache.kafka.common.metrics.JmxReporter;
 import org.apache.kafka.common.metrics.MetricsReporter;
 import org.apache.kafka.common.metrics.stats.Avg;
 import org.apache.kafka.common.utils.LogCaptureAppender;
@@ -73,6 +74,7 @@ import org.apache.kafka.connect.sink.SinkTask;
 import org.apache.kafka.connect.source.SourceConnector;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.kafka.connect.source.SourceTask;
+import org.apache.kafka.connect.storage.AppliedConnectorConfig;
 import org.apache.kafka.connect.storage.CloseableOffsetStorageReader;
 import org.apache.kafka.connect.storage.ClusterConfigState;
 import org.apache.kafka.connect.storage.ConnectorOffsetBackingStore;
@@ -84,14 +86,13 @@ import org.apache.kafka.connect.storage.StatusBackingStore;
 import org.apache.kafka.connect.util.Callback;
 import org.apache.kafka.connect.util.ConnectorTaskId;
 import org.apache.kafka.connect.util.FutureCallback;
-import org.apache.kafka.connect.util.ParameterizedTest;
 import org.apache.kafka.connect.util.SinkUtils;
 import org.apache.kafka.connect.util.TopicAdmin;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
+
+import org.apache.maven.artifact.versioning.VersionRange;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.AdditionalAnswers;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
@@ -102,8 +103,6 @@ import org.mockito.MockitoSession;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.quality.Strictness;
 
-import javax.management.MBeanServer;
-import javax.management.ObjectName;
 import java.lang.management.ManagementFactory;
 import java.util.Arrays;
 import java.util.Collection;
@@ -122,6 +121,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
 
 import static org.apache.kafka.clients.admin.AdminClientConfig.RETRY_BACKOFF_MS_CONFIG;
 import static org.apache.kafka.clients.consumer.ConsumerConfig.ISOLATION_LEVEL_CONFIG;
@@ -144,17 +146,14 @@ import static org.apache.kafka.connect.runtime.distributed.DistributedConfig.GRO
 import static org.apache.kafka.connect.runtime.distributed.DistributedConfig.OFFSET_STORAGE_TOPIC_CONFIG;
 import static org.apache.kafka.connect.runtime.distributed.DistributedConfig.STATUS_STORAGE_TOPIC_CONFIG;
 import static org.apache.kafka.connect.sink.SinkTask.TOPICS_CONFIG;
-import static org.hamcrest.CoreMatchers.containsString;
-import static org.hamcrest.CoreMatchers.instanceOf;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThrows;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -175,7 +174,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
-@RunWith(Parameterized.class)
 public class WorkerTest {
 
     private static final String CONNECTOR_ID = "test-connector";
@@ -237,24 +235,14 @@ public class WorkerTest {
     private String mockFileProviderTestId;
     private Map<String, String> connectorProps;
 
-    private final boolean enableTopicCreation;
 
     private MockedConstruction<WorkerSourceTask> sourceTaskMockedConstruction;
     private MockedConstruction<ExactlyOnceWorkerSourceTask> eosSourceTaskMockedConstruction;
     private MockedConstruction<WorkerSinkTask> sinkTaskMockedConstruction;
     private MockitoSession mockitoSession;
 
-    @ParameterizedTest.Parameters
-    public static Collection<Boolean> parameters() {
-        return Arrays.asList(false, true);
-    }
 
-    public WorkerTest(boolean enableTopicCreation) {
-        this.enableTopicCreation = enableTopicCreation;
-    }
-
-    @Before
-    public void setup() {
+    public void setup(boolean enableTopicCreation) {
         // Use strict mode to detect unused mocks
         mockitoSession = Mockito.mockitoSession()
                                 .initMocks(this)
@@ -264,7 +252,7 @@ public class WorkerTest {
         workerProps.put("key.converter", "org.apache.kafka.connect.json.JsonConverter");
         workerProps.put("value.converter", "org.apache.kafka.connect.json.JsonConverter");
         workerProps.put("offset.storage.file.filename", "/tmp/connect.offsets");
-        workerProps.put(CommonClientConfigs.METRIC_REPORTER_CLASSES_CONFIG, MockMetricsReporter.class.getName());
+        workerProps.put(CommonClientConfigs.METRIC_REPORTER_CLASSES_CONFIG, JmxReporter.class.getName() + "," + MockMetricsReporter.class.getName());
         workerProps.put("config.providers", "file");
         workerProps.put("config.providers.file.class", MockFileConfigProvider.class.getName());
         mockFileProviderTestId = UUID.randomUUID().toString();
@@ -314,7 +302,7 @@ public class WorkerTest {
                 WorkerTest::workerTaskConstructor);
     }
 
-    @After
+    @AfterEach
     public void teardown() {
         // Critical to always close MockedStatics
         // Ideal would be to use try-with-resources in an individual test, but it introduced a rather large level of
@@ -326,14 +314,16 @@ public class WorkerTest {
         mockitoSession.finishMocking();
     }
 
-    @Test
-    public void testStartAndStopConnector() throws Throwable {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testStartAndStopConnector(boolean enableTopicCreation) throws Throwable {
+        setup(enableTopicCreation);
         final String connectorClass = SampleSourceConnector.class.getName();
         connectorProps.put(CONNECTOR_CLASS_CONFIG, connectorClass);
 
         // Create
         mockKafkaClusterId();
-        mockConnectorIsolation(connectorClass, sourceConnector);
+        mockVersionedConnectorIsolation(connectorClass, null, sourceConnector);
         mockExecutorRealSubmit(WorkerConnector.class);
 
         worker = new Worker(WORKER_ID, new MockTime(), plugins, config, offsetBackingStore, noneConnectorClientConfigOverridePolicy);
@@ -352,12 +342,8 @@ public class WorkerTest {
 
         FutureCallback<TargetState> onSecondStart = new FutureCallback<>();
         worker.startConnector(CONNECTOR_ID, connectorProps, ctx, connectorStatusListener, TargetState.STARTED, onSecondStart);
-        try {
-            onSecondStart.get(0, TimeUnit.MILLISECONDS);
-            fail("Should have failed while trying to start second connector with same name");
-        } catch (ExecutionException e) {
-            assertThat(e.getCause(), instanceOf(ConnectException.class));
-        }
+        Exception exc = assertThrows(ExecutionException.class, () -> onSecondStart.get(0, TimeUnit.MILLISECONDS));
+        assertInstanceOf(ConnectException.class, exc.getCause());
 
         assertStatistics(worker, 1, 0);
         assertStartupStatistics(worker, 1, 0, 0, 0);
@@ -373,7 +359,7 @@ public class WorkerTest {
 
 
         verifyKafkaClusterId();
-        verifyConnectorIsolation(sourceConnector);
+        verifyVersionedConnectorIsolation(connectorClass, null, sourceConnector);
         verifyExecutorSubmit();
         verify(sourceConnector).initialize(any(ConnectorContext.class));
         verify(sourceConnector).start(connectorProps);
@@ -393,8 +379,10 @@ public class WorkerTest {
                .thenReturn(mockFileConfigProvider);
     }
 
-    @Test
-    public void testStartConnectorFailure() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testStartConnectorFailure(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         final String nonConnectorClass = "java.util.HashMap";
         connectorProps.put(CONNECTOR_CLASS_CONFIG, nonConnectorClass); // Bad connector class name
 
@@ -402,7 +390,8 @@ public class WorkerTest {
         mockKafkaClusterId();
         mockGenericIsolation();
 
-        when(plugins.newConnector(anyString())).thenThrow(exception);
+        when(plugins.pluginLoader(nonConnectorClass, null)).thenReturn(pluginLoader);
+        when(plugins.newConnector(nonConnectorClass, null)).thenThrow(exception);
 
         worker = new Worker(WORKER_ID, new MockTime(), plugins, config, offsetBackingStore, noneConnectorClientConfigOverridePolicy);
         worker.herder = herder;
@@ -427,17 +416,19 @@ public class WorkerTest {
         assertStatistics(worker, 0, 0);
         assertStartupStatistics(worker, 1, 1, 0, 0);
 
-        verify(plugins).newConnector(anyString());
+        verify(plugins).newConnector(nonConnectorClass, null);
         verifyKafkaClusterId();
         verifyGenericIsolation();
         verify(connectorStatusListener).onFailure(eq(CONNECTOR_ID), any(ConnectException.class));
     }
 
-    @Test
-    public void testAddConnectorByAlias() throws Throwable {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testAddConnectorByAlias(boolean enableTopicCreation) throws Throwable {
+        setup(enableTopicCreation);
         final String connectorAlias = "SampleSourceConnector";
         mockKafkaClusterId();
-        mockConnectorIsolation(connectorAlias, sinkConnector);
+        mockVersionedConnectorIsolation(connectorAlias, null, sinkConnector);
         mockExecutorRealSubmit(WorkerConnector.class);
 
         connectorProps.put(CONNECTOR_CLASS_CONFIG, connectorAlias);
@@ -467,7 +458,7 @@ public class WorkerTest {
         assertStartupStatistics(worker, 1, 0, 0, 0);
 
         verifyKafkaClusterId();
-        verifyConnectorIsolation(sinkConnector);
+        verifyVersionedConnectorIsolation(connectorAlias, null, sinkConnector);
         verifyExecutorSubmit();
         verify(sinkConnector).initialize(any(ConnectorContext.class));
         verify(sinkConnector).start(connectorProps);
@@ -476,12 +467,14 @@ public class WorkerTest {
         verify(ctx).close();
     }
 
-    @Test
-    public void testAddConnectorByShortAlias() throws Throwable {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testAddConnectorByShortAlias(boolean enableTopicCreation) throws Throwable {
+        setup(enableTopicCreation);
         final String shortConnectorAlias = "WorkerTest";
 
         mockKafkaClusterId();
-        mockConnectorIsolation(shortConnectorAlias, sinkConnector);
+        mockVersionedConnectorIsolation(shortConnectorAlias, null, sinkConnector);
         mockExecutorRealSubmit(WorkerConnector.class);
         connectorProps.put(ConnectorConfig.CONNECTOR_CLASS_CONFIG, shortConnectorAlias);
 
@@ -508,7 +501,7 @@ public class WorkerTest {
         assertStatistics(worker, 0, 0);
 
         verifyKafkaClusterId();
-        verifyConnectorIsolation(sinkConnector);
+        verifyVersionedConnectorIsolation(shortConnectorAlias, null, sinkConnector);
         verify(sinkConnector).initialize(any(ConnectorContext.class));
         verify(sinkConnector).start(connectorProps);
         verify(connectorStatusListener).onStartup(CONNECTOR_ID);
@@ -518,8 +511,10 @@ public class WorkerTest {
         verifyExecutorSubmit();
     }
 
-    @Test
-    public void testStopInvalidConnector() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testStopInvalidConnector(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
         worker = new Worker(WORKER_ID, new MockTime(), plugins, config, offsetBackingStore, noneConnectorClientConfigOverridePolicy);
         worker.herder = herder;
@@ -531,12 +526,14 @@ public class WorkerTest {
         verifyConverters();
     }
 
-    @Test
-    public void testReconfigureConnectorTasks() throws Throwable {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testReconfigureConnectorTasks(boolean enableTopicCreation) throws Throwable {
+        setup(enableTopicCreation);
         final String connectorClass = SampleSourceConnector.class.getName();
 
         mockKafkaClusterId();
-        mockConnectorIsolation(connectorClass, sinkConnector);
+        mockVersionedConnectorIsolation(connectorClass, null, sinkConnector);
         mockExecutorRealSubmit(WorkerConnector.class);
 
         Map<String, String> taskProps = Collections.singletonMap("foo", "bar");
@@ -564,12 +561,8 @@ public class WorkerTest {
 
         FutureCallback<TargetState> onSecondStart = new FutureCallback<>();
         worker.startConnector(CONNECTOR_ID, connectorProps, ctx, connectorStatusListener, TargetState.STARTED, onSecondStart);
-        try {
-            onSecondStart.get(0, TimeUnit.MILLISECONDS);
-            fail("Should have failed while trying to start second connector with same name");
-        } catch (ExecutionException e) {
-            assertThat(e.getCause(), instanceOf(ConnectException.class));
-        }
+        Exception exc = assertThrows(ExecutionException.class, () -> onSecondStart.get(0, TimeUnit.MILLISECONDS));
+        assertInstanceOf(ConnectException.class, exc.getCause());
 
         Map<String, String> connProps = new HashMap<>(connectorProps);
         connProps.put(ConnectorConfig.TASKS_MAX_CONFIG, "2");
@@ -593,7 +586,7 @@ public class WorkerTest {
         assertStatistics(worker, 0, 0);
 
         verifyKafkaClusterId();
-        verifyConnectorIsolation(sinkConnector);
+        verifyVersionedConnectorIsolation(connectorClass, null, sinkConnector);
         verifyExecutorSubmit();
         verify(sinkConnector).initialize(any(ConnectorContext.class));
         verify(sinkConnector).start(connectorProps);
@@ -605,13 +598,15 @@ public class WorkerTest {
         verify(ctx).close();
     }
 
-    @Test
-    public void testAddRemoveSourceTask() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testAddRemoveSourceTask(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
-        mockTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, task);
-        mockTaskConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, WorkerConfig.KEY_CONVERTER_CLASS_CONFIG, taskKeyConverter);
-        mockTaskConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG, taskValueConverter);
-        mockTaskHeaderConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, taskHeaderConverter);
+        mockVersionedTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, null, sourceConnector, task);
+        mockVersionedTaskConverterFromConnector(ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG, ConnectorConfig.KEY_CONVERTER_VERSION_CONFIG, taskKeyConverter);
+        mockVersionedTaskConverterFromConnector(ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG, ConnectorConfig.VALUE_CONVERTER_VERSION_CONFIG, taskValueConverter);
+        mockVersionedTaskHeaderConverterFromConnector(taskHeaderConverter);
         mockExecutorFakeSubmit(WorkerTask.class);
 
         Map<String, String> origProps = Collections.singletonMap(TaskConfig.TASK_CLASS_CONFIG, TestSourceTask.class.getName());
@@ -634,6 +629,7 @@ public class WorkerTest {
                 Collections.singletonMap(TASK_ID, origProps),
                 Collections.emptyMap(),
                 Collections.emptyMap(),
+                Collections.singletonMap(CONNECTOR_ID, new AppliedConnectorConfig(connectorConfigs)),
                 Collections.emptySet(),
                 Collections.emptySet()
         );
@@ -648,23 +644,25 @@ public class WorkerTest {
         assertStatistics(worker, 0, 0);
 
         verifyKafkaClusterId();
-        verifyTaskIsolation(task);
-        verifyTaskConverter(WorkerConfig.KEY_CONVERTER_CLASS_CONFIG);
-        verifyTaskConverter(WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG);
-        verifyTaskHeaderConverter();
+        verifyVersionedTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, null, task);
+        verifyVersionedTaskConverterFromConnector(ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG, ConnectorConfig.KEY_CONVERTER_VERSION_CONFIG);
+        verifyVersionedTaskConverterFromConnector(ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG, ConnectorConfig.VALUE_CONVERTER_VERSION_CONFIG);
+        verifyVersionedTaskHeaderConverterFromConnector();
 
         verifyExecutorSubmit();
     }
 
-    @Test
-    public void testAddRemoveSinkTask() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testAddRemoveSinkTask(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         // Most of the other cases use source tasks; we make sure to get code coverage for sink tasks here as well
         SinkTask task = mock(TestSinkTask.class);
         mockKafkaClusterId();
-        mockTaskIsolation(SampleSinkConnector.class, TestSinkTask.class, task);
-        mockTaskConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, WorkerConfig.KEY_CONVERTER_CLASS_CONFIG, taskKeyConverter);
-        mockTaskConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG, taskValueConverter);
-        mockTaskHeaderConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, taskHeaderConverter);
+        mockVersionedTaskIsolation(SampleSinkConnector.class, TestSinkTask.class, null, sinkConnector, task);
+        mockVersionedTaskConverterFromConnector(ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG, ConnectorConfig.KEY_CONVERTER_VERSION_CONFIG, taskKeyConverter);
+        mockVersionedTaskConverterFromConnector(ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG, ConnectorConfig.VALUE_CONVERTER_VERSION_CONFIG, taskValueConverter);
+        mockVersionedTaskHeaderConverterFromConnector(taskHeaderConverter);
         mockExecutorFakeSubmit(WorkerTask.class);
 
         Map<String, String> origProps = Collections.singletonMap(TaskConfig.TASK_CLASS_CONFIG, TestSinkTask.class.getName());
@@ -689,6 +687,7 @@ public class WorkerTest {
                 Collections.singletonMap(TASK_ID, origProps),
                 Collections.emptyMap(),
                 Collections.emptyMap(),
+                Collections.singletonMap(CONNECTOR_ID, new AppliedConnectorConfig(connectorConfigs)),
                 Collections.emptySet(),
                 Collections.emptySet()
         );
@@ -703,15 +702,17 @@ public class WorkerTest {
         assertStatistics(worker, 0, 0);
 
         verifyKafkaClusterId();
-        verifyTaskIsolation(task);
-        verifyTaskConverter(WorkerConfig.KEY_CONVERTER_CLASS_CONFIG);
-        verifyTaskConverter(WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG);
-        verifyTaskHeaderConverter();
+        verifyVersionedTaskIsolation(SampleSinkConnector.class, TestSinkTask.class, null, task);
+        verifyVersionedTaskConverterFromConnector(ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG, ConnectorConfig.KEY_CONVERTER_VERSION_CONFIG);
+        verifyVersionedTaskConverterFromConnector(ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG, ConnectorConfig.VALUE_CONVERTER_VERSION_CONFIG);
+        verifyVersionedTaskHeaderConverterFromConnector();
         verifyExecutorSubmit();
     }
 
-    @Test
-    public void testAddRemoveExactlyOnceSourceTask() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testAddRemoveExactlyOnceSourceTask(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         Map<String, String> workerProps = new HashMap<>();
         workerProps.put("key.converter", "org.apache.kafka.connect.json.JsonConverter");
         workerProps.put("value.converter", "org.apache.kafka.connect.json.JsonConverter");
@@ -730,10 +731,10 @@ public class WorkerTest {
         config = new DistributedConfig(workerProps);
 
         mockKafkaClusterId();
-        mockTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, task);
-        mockTaskConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, WorkerConfig.KEY_CONVERTER_CLASS_CONFIG, taskKeyConverter);
-        mockTaskConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG, taskValueConverter);
-        mockTaskHeaderConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, taskHeaderConverter);
+        mockVersionedTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, null, sourceConnector, task);
+        mockVersionedTaskConverterFromConnector(ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG, ConnectorConfig.KEY_CONVERTER_VERSION_CONFIG, taskKeyConverter);
+        mockVersionedTaskConverterFromConnector(ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG, ConnectorConfig.VALUE_CONVERTER_VERSION_CONFIG, taskValueConverter);
+        mockVersionedTaskHeaderConverterFromConnector(taskHeaderConverter);
         mockExecutorFakeSubmit(WorkerTask.class);
 
         Runnable preProducer = mock(Runnable.class);
@@ -759,6 +760,7 @@ public class WorkerTest {
                 Collections.singletonMap(TASK_ID, origProps),
                 Collections.emptyMap(),
                 Collections.emptyMap(),
+                Collections.singletonMap(CONNECTOR_ID, new AppliedConnectorConfig(connectorConfigs)),
                 Collections.emptySet(),
                 Collections.emptySet()
         );
@@ -774,15 +776,17 @@ public class WorkerTest {
         assertStatistics(worker, 0, 0);
 
         verifyKafkaClusterId();
-        verifyTaskIsolation(task);
-        verifyTaskConverter(WorkerConfig.KEY_CONVERTER_CLASS_CONFIG);
-        verifyTaskConverter(WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG);
-        verifyTaskHeaderConverter();
+        verifyVersionedTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, null, task);
+        verifyVersionedTaskConverterFromConnector(ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG, ConnectorConfig.KEY_CONVERTER_VERSION_CONFIG);
+        verifyVersionedTaskConverterFromConnector(ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG, ConnectorConfig.VALUE_CONVERTER_VERSION_CONFIG);
+        verifyVersionedTaskHeaderConverterFromConnector();
         verifyExecutorSubmit();
     }
 
-    @Test
-    public void testTaskStatusMetricsStatuses() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testTaskStatusMetricsStatuses(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockInternalConverters();
         mockStorage();
         mockFileConfigProvider();
@@ -792,11 +796,10 @@ public class WorkerTest {
         TaskConfig taskConfig = new TaskConfig(origProps);
 
         mockKafkaClusterId();
-        mockTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, task);
-        // Expect that the worker will create converters and will find them using the current classloader ...
-        mockTaskConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, WorkerConfig.KEY_CONVERTER_CLASS_CONFIG, taskKeyConverter);
-        mockTaskConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG, taskValueConverter);
-        mockTaskHeaderConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, taskHeaderConverter);
+        mockVersionedTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, null, sourceConnector, task);
+        mockVersionedTaskConverterFromConnector(ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG, ConnectorConfig.KEY_CONVERTER_VERSION_CONFIG, taskKeyConverter);
+        mockVersionedTaskConverterFromConnector(ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG, ConnectorConfig.VALUE_CONVERTER_VERSION_CONFIG, taskValueConverter);
+        mockVersionedTaskHeaderConverterFromConnector(taskHeaderConverter);
         mockExecutorFakeSubmit(WorkerTask.class);
 
 
@@ -849,7 +852,7 @@ public class WorkerTest {
         verify(instantiatedTask).initialize(taskConfig);
         verify(herder, times(5)).taskStatus(TASK_ID);
         verifyKafkaClusterId();
-        verifyTaskIsolation(task);
+        verifyVersionedTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, null, task);
         verifyExecutorSubmit();
         verify(instantiatedTask, atLeastOnce()).id();
         verify(instantiatedTask).awaitStop(anyLong());
@@ -858,13 +861,15 @@ public class WorkerTest {
         // Called when we stop the worker
         verify(instantiatedTask).loader();
         verify(instantiatedTask).stop();
-        verifyTaskConverter(WorkerConfig.KEY_CONVERTER_CLASS_CONFIG);
-        verifyTaskConverter(WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG);
-        verifyTaskHeaderConverter();
+        verifyVersionedTaskConverterFromConnector(ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG, ConnectorConfig.KEY_CONVERTER_VERSION_CONFIG);
+        verifyVersionedTaskConverterFromConnector(ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG, ConnectorConfig.VALUE_CONVERTER_VERSION_CONFIG);
+        verifyVersionedTaskHeaderConverterFromConnector();
     }
 
-    @Test
-    public void testConnectorStatusMetricsGroup_taskStatusCounter() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testConnectorStatusMetricsGroup_taskStatusCounter(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         ConcurrentMap<ConnectorTaskId, WorkerTask<?, ?>> tasks = new ConcurrentHashMap<>();
         tasks.put(new ConnectorTaskId("c1", 0), mock(WorkerSourceTask.class));
         tasks.put(new ConnectorTaskId("c1", 1), mock(WorkerSourceTask.class));
@@ -892,8 +897,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testStartTaskFailure() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testStartTaskFailure(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockInternalConverters();
         mockFileConfigProvider();
 
@@ -901,6 +908,7 @@ public class WorkerTest {
 
         mockKafkaClusterId();
         mockGenericIsolation();
+        when(plugins.pluginLoader(SampleSourceConnector.class.getName(), null)).thenReturn(pluginLoader);
 
         worker = new Worker(WORKER_ID, new MockTime(), plugins, config, offsetBackingStore, noneConnectorClientConfigOverridePolicy);
         worker.herder = herder;
@@ -920,21 +928,23 @@ public class WorkerTest {
         verifyGenericIsolation();
     }
 
-    @Test
-    public void testCleanupTasksOnStop() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testCleanupTasksOnStop(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockInternalConverters();
         mockStorage();
         mockFileConfigProvider();
 
         mockKafkaClusterId();
-        mockTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, task);
+        mockVersionedTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, null, sourceConnector, task);
         // Expect that the worker will create converters and will not initially find them using the current classloader ...
-        mockTaskConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, WorkerConfig.KEY_CONVERTER_CLASS_CONFIG, null);
-        mockTaskConverter(ClassLoaderUsage.PLUGINS, WorkerConfig.KEY_CONVERTER_CLASS_CONFIG, taskKeyConverter);
-        mockTaskConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG, null);
-        mockTaskConverter(ClassLoaderUsage.PLUGINS, WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG, taskValueConverter);
-        mockTaskHeaderConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, null);
-        mockTaskHeaderConverter(ClassLoaderUsage.PLUGINS, taskHeaderConverter);
+        mockVersionedTaskConverterFromConnector(ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG, ConnectorConfig.KEY_CONVERTER_VERSION_CONFIG, null);
+        mockVersionedTaskConverterFromWorker(WorkerConfig.KEY_CONVERTER_CLASS_CONFIG, WorkerConfig.KEY_CONVERTER_VERSION, taskKeyConverter);
+        mockVersionedTaskConverterFromConnector(ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG, ConnectorConfig.VALUE_CONVERTER_VERSION_CONFIG, null);
+        mockVersionedTaskConverterFromWorker(WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG, WorkerConfig.VALUE_CONVERTER_VERSION, taskValueConverter);
+        mockVersionedTaskHeaderConverterFromConnector(null);
+        mockVersionedTaskHeaderConverterFromWorker(taskHeaderConverter);
         mockExecutorFakeSubmit(WorkerTask.class);
 
         Map<String, String> origProps = Collections.singletonMap(TaskConfig.TASK_CLASS_CONFIG, TestSourceTask.class.getName());
@@ -960,13 +970,21 @@ public class WorkerTest {
         verify(constructedMockTask).awaitStop(anyLong());
         verify(constructedMockTask).removeMetrics();
         verifyKafkaClusterId();
-        verifyTaskIsolation(task);
+        verifyVersionedTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, null, task);
+        verifyVersionedTaskConverterFromConnector(ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG, ConnectorConfig.KEY_CONVERTER_VERSION_CONFIG);
+        verifyVersionedTaskConverterFromWorker(WorkerConfig.KEY_CONVERTER_CLASS_CONFIG, WorkerConfig.KEY_CONVERTER_VERSION);
+        verifyVersionedTaskConverterFromConnector(ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG, ConnectorConfig.VALUE_CONVERTER_VERSION_CONFIG);
+        verifyVersionedTaskConverterFromWorker(WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG, WorkerConfig.VALUE_CONVERTER_VERSION);
+        verifyVersionedTaskHeaderConverterFromConnector();
+        verifyVersionedTaskHeaderConverterFromWorker();
         verifyConverters();
         verifyExecutorSubmit();
     }
 
-    @Test
-    public void testConverterOverrides() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testConverterOverrides(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockInternalConverters();
         mockStorage();
         mockFileConfigProvider();
@@ -975,14 +993,14 @@ public class WorkerTest {
         TaskConfig taskConfig = new TaskConfig(origProps);
 
         mockKafkaClusterId();
-        mockTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, task);
+        mockVersionedTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, null, sourceConnector, task);
         // Expect that the worker will create converters and will not initially find them using the current classloader ...
-        mockTaskConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, WorkerConfig.KEY_CONVERTER_CLASS_CONFIG, null);
-        mockTaskConverter(ClassLoaderUsage.PLUGINS, WorkerConfig.KEY_CONVERTER_CLASS_CONFIG, taskKeyConverter);
-        mockTaskConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG, null);
-        mockTaskConverter(ClassLoaderUsage.PLUGINS, WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG, taskValueConverter);
-        mockTaskHeaderConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, null);
-        mockTaskHeaderConverter(ClassLoaderUsage.PLUGINS, taskHeaderConverter);
+        mockVersionedTaskConverterFromConnector(ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG, ConnectorConfig.KEY_CONVERTER_VERSION_CONFIG, null);
+        mockVersionedTaskConverterFromWorker(WorkerConfig.KEY_CONVERTER_CLASS_CONFIG, WorkerConfig.KEY_CONVERTER_VERSION, taskKeyConverter);
+        mockVersionedTaskConverterFromConnector(ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG, ConnectorConfig.VALUE_CONVERTER_VERSION_CONFIG, null);
+        mockVersionedTaskConverterFromWorker(WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG, WorkerConfig.VALUE_CONVERTER_VERSION, taskValueConverter);
+        mockVersionedTaskHeaderConverterFromConnector(null);
+        mockVersionedTaskHeaderConverterFromWorker(taskHeaderConverter);
         mockExecutorFakeSubmit(WorkerTask.class);
 
         worker = new Worker(WORKER_ID, new MockTime(), plugins, config, offsetBackingStore, executorService,
@@ -1014,13 +1032,21 @@ public class WorkerTest {
         verify(instantiatedTask).removeMetrics();
 
         verifyKafkaClusterId();
-        verifyTaskIsolation(task);
+        verifyVersionedTaskIsolation(SampleSourceConnector.class, TestSourceTask.class, null, task);
+        verifyVersionedTaskConverterFromConnector(ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG, ConnectorConfig.KEY_CONVERTER_VERSION_CONFIG);
+        verifyVersionedTaskConverterFromWorker(WorkerConfig.KEY_CONVERTER_CLASS_CONFIG, WorkerConfig.KEY_CONVERTER_VERSION);
+        verifyVersionedTaskConverterFromConnector(ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG, ConnectorConfig.VALUE_CONVERTER_VERSION_CONFIG);
+        verifyVersionedTaskConverterFromWorker(WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG, WorkerConfig.VALUE_CONVERTER_VERSION);
+        verifyVersionedTaskHeaderConverterFromConnector();
+        verifyVersionedTaskHeaderConverterFromWorker();
         verifyExecutorSubmit();
         verifyStorage();
     }
 
-    @Test
-    public void testProducerConfigsWithoutOverrides() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testProducerConfigsWithoutOverrides(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         when(connectorConfig.originalsWithPrefix(CONNECTOR_CLIENT_PRODUCER_OVERRIDES_PREFIX)).thenReturn(new HashMap<>());
         Map<String, String> expectedConfigs = new HashMap<>(defaultProducerConfigs);
         expectedConfigs.put("client.id", "connector-producer-job-0");
@@ -1030,8 +1056,10 @@ public class WorkerTest {
         verify(connectorConfig).originalsWithPrefix(CONNECTOR_CLIENT_PRODUCER_OVERRIDES_PREFIX);
     }
 
-    @Test
-    public void testProducerConfigsWithOverrides() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testProducerConfigsWithOverrides(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         Map<String, String> props = new HashMap<>(workerProps);
         props.put("producer.acks", "-1");
         props.put("producer.linger.ms", "1000");
@@ -1051,8 +1079,10 @@ public class WorkerTest {
         verify(connectorConfig).originalsWithPrefix(CONNECTOR_CLIENT_PRODUCER_OVERRIDES_PREFIX);
     }
 
-    @Test
-    public void testProducerConfigsWithClientOverrides() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testProducerConfigsWithClientOverrides(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         Map<String, String> props = new HashMap<>(workerProps);
         props.put("producer.acks", "-1");
         props.put("producer.linger.ms", "1000");
@@ -1077,8 +1107,10 @@ public class WorkerTest {
         verify(connectorConfig).originalsWithPrefix(CONNECTOR_CLIENT_PRODUCER_OVERRIDES_PREFIX);
     }
 
-    @Test
-    public void testConsumerConfigsWithoutOverrides() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testConsumerConfigsWithoutOverrides(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         Map<String, String> expectedConfigs = new HashMap<>(defaultConsumerConfigs);
         expectedConfigs.put("group.id", "connect-test-connector");
         expectedConfigs.put("client.id", "connector-consumer-job-0");
@@ -1090,8 +1122,10 @@ public class WorkerTest {
                 null, noneConnectorClientConfigOverridePolicy, CLUSTER_ID, ConnectorType.SINK));
     }
 
-    @Test
-    public void testConsumerConfigsWithOverrides() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testConsumerConfigsWithOverrides(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         Map<String, String> props = new HashMap<>(workerProps);
         props.put("consumer.group.id", "connect-test");
         props.put("consumer.auto.offset.reset", "latest");
@@ -1113,8 +1147,10 @@ public class WorkerTest {
         verify(connectorConfig).originalsWithPrefix(ConnectorConfig.CONNECTOR_CLIENT_CONSUMER_OVERRIDES_PREFIX);
     }
 
-    @Test
-    public void testConsumerConfigsWithClientOverrides() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testConsumerConfigsWithClientOverrides(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         Map<String, String> props = new HashMap<>(workerProps);
         props.put("consumer.auto.offset.reset", "latest");
         props.put("consumer.max.poll.records", "5000");
@@ -1139,8 +1175,10 @@ public class WorkerTest {
         verify(connectorConfig).originalsWithPrefix(ConnectorConfig.CONNECTOR_CLIENT_CONSUMER_OVERRIDES_PREFIX);
     }
 
-    @Test
-    public void testConsumerConfigsClientOverridesWithNonePolicy() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testConsumerConfigsClientOverridesWithNonePolicy(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         Map<String, String> props = new HashMap<>(workerProps);
         props.put("consumer.auto.offset.reset", "latest");
         props.put("consumer.max.poll.records", "5000");
@@ -1156,8 +1194,10 @@ public class WorkerTest {
         verify(connectorConfig).originalsWithPrefix(ConnectorConfig.CONNECTOR_CLIENT_CONSUMER_OVERRIDES_PREFIX);
     }
 
-    @Test
-    public void testAdminConfigsClientOverridesWithAllPolicy() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testAdminConfigsClientOverridesWithAllPolicy(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         Map<String, String> props = new HashMap<>(workerProps);
         props.put("admin.client.id", "testid");
         props.put("admin.metadata.max.age.ms", "5000");
@@ -1182,8 +1222,10 @@ public class WorkerTest {
         verify(connectorConfig).originalsWithPrefix(CONNECTOR_CLIENT_ADMIN_OVERRIDES_PREFIX);
     }
 
-    @Test
-    public void testAdminConfigsClientOverridesWithNonePolicy() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testAdminConfigsClientOverridesWithNonePolicy(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         Map<String, String> props = new HashMap<>(workerProps);
         props.put("admin.client.id", "testid");
         props.put("admin.metadata.max.age.ms", "5000");
@@ -1197,8 +1239,10 @@ public class WorkerTest {
         verify(connectorConfig).originalsWithPrefix(CONNECTOR_CLIENT_ADMIN_OVERRIDES_PREFIX);
     }
 
-    @Test
-    public void testRegularSourceOffsetsConsumerConfigs() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testRegularSourceOffsetsConsumerConfigs(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         final Map<String, Object> connectorConsumerOverrides = new HashMap<>();
         when(connectorConfig.originalsWithPrefix(ConnectorConfig.CONNECTOR_CLIENT_CONSUMER_OVERRIDES_PREFIX)).thenReturn(connectorConsumerOverrides);
 
@@ -1236,8 +1280,10 @@ public class WorkerTest {
         assertEquals("read_uncommitted", consumerConfigs.get(ISOLATION_LEVEL_CONFIG));
     }
 
-    @Test
-    public void testExactlyOnceSourceOffsetsConsumerConfigs() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testExactlyOnceSourceOffsetsConsumerConfigs(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         final Map<String, Object> connectorConsumerOverrides = new HashMap<>();
         when(connectorConfig.originalsWithPrefix(ConnectorConfig.CONNECTOR_CLIENT_CONSUMER_OVERRIDES_PREFIX)).thenReturn(connectorConsumerOverrides);
 
@@ -1275,8 +1321,10 @@ public class WorkerTest {
         assertEquals("read_committed", consumerConfigs.get(ISOLATION_LEVEL_CONFIG));
     }
 
-    @Test
-    public void testExactlyOnceSourceTaskProducerConfigs() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testExactlyOnceSourceTaskProducerConfigs(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         final Map<String, Object> connectorProducerOverrides = new HashMap<>();
         when(connectorConfig.originalsWithPrefix(CONNECTOR_CLIENT_PRODUCER_OVERRIDES_PREFIX)).thenReturn(connectorProducerOverrides);
 
@@ -1331,8 +1379,10 @@ public class WorkerTest {
         assertEquals(transactionalId, producerConfigs.get(TRANSACTIONAL_ID_CONFIG));
     }
 
-    @Test
-    public void testOffsetStoreForRegularSourceConnector() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testOffsetStoreForRegularSourceConnector(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockInternalConverters();
         mockFileConfigProvider();
 
@@ -1418,8 +1468,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testOffsetStoreForExactlyOnceSourceConnector() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testOffsetStoreForExactlyOnceSourceConnector(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockInternalConverters();
         mockFileConfigProvider();
 
@@ -1505,8 +1557,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testOffsetStoreForRegularSourceTask() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testOffsetStoreForRegularSourceTask(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockInternalConverters();
         mockFileConfigProvider();
 
@@ -1621,8 +1675,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testOffsetStoreForExactlyOnceSourceTask() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testOffsetStoreForExactlyOnceSourceTask(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockInternalConverters();
         mockFileConfigProvider();
 
@@ -1714,8 +1770,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testWorkerMetrics() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testWorkerMetrics(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
         mockInternalConverters();
         mockFileConfigProvider();
@@ -1733,8 +1791,7 @@ public class WorkerTest {
 
         List<MetricsReporter> list = worker.metrics().metrics().reporters();
         for (MetricsReporter reporter : list) {
-            if (reporter instanceof MockMetricsReporter) {
-                MockMetricsReporter mockMetricsReporter = (MockMetricsReporter) reporter;
+            if (reporter instanceof MockMetricsReporter mockMetricsReporter) {
                 //verify connect cluster is set in MetricsContext
                 assertEquals(CLUSTER_ID, mockMetricsReporter.getMetricsContext().contextLabels().get(WorkerConfig.CONNECT_KAFKA_CLUSTER_ID));
             }
@@ -1745,8 +1802,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testExecutorServiceShutdown() throws InterruptedException {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testExecutorServiceShutdown(boolean enableTopicCreation) throws InterruptedException {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
         ExecutorService executorService = mock(ExecutorService.class);
         doNothing().when(executorService).shutdown();
@@ -1766,8 +1825,10 @@ public class WorkerTest {
 
     }
 
-    @Test
-    public void testExecutorServiceShutdownWhenTerminationFails() throws InterruptedException {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testExecutorServiceShutdownWhenTerminationFails(boolean enableTopicCreation) throws InterruptedException {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
         ExecutorService executorService = mock(ExecutorService.class);
         doNothing().when(executorService).shutdown();
@@ -1787,8 +1848,10 @@ public class WorkerTest {
 
     }
 
-    @Test
-    public void testExecutorServiceShutdownWhenTerminationThrowsException() throws InterruptedException {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testExecutorServiceShutdownWhenTerminationThrowsException(boolean enableTopicCreation) throws InterruptedException {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
         ExecutorService executorService = mock(ExecutorService.class);
         doNothing().when(executorService).shutdown();
@@ -1809,9 +1872,11 @@ public class WorkerTest {
         verifyNoMoreInteractions(executorService);
     }
 
-    @Test
-    @SuppressWarnings("unchecked")
-    public void testZombieFencing() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public void testZombieFencing(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         Admin admin = mock(Admin.class);
         AtomicReference<Map<String, Object>> adminConfig = new AtomicReference<>();
         Function<Map<String, Object>, Admin> mockAdminConstructor = actualAdminConfig -> {
@@ -1827,6 +1892,8 @@ public class WorkerTest {
 
         mockKafkaClusterId();
         mockGenericIsolation();
+        when(plugins.connectorClass(anyString(), any())).thenReturn((Class) sourceConnector.getClass());
+        when(plugins.pluginLoader(SampleSourceConnector.class.getName(), null)).thenReturn(pluginLoader);
 
         worker = new Worker(WORKER_ID, new MockTime(), plugins, config, offsetBackingStore, executorService,
                 allConnectorClientConfigOverridePolicy, mockAdminConstructor);
@@ -1841,17 +1908,19 @@ public class WorkerTest {
 
         assertEquals(expectedZombieFenceFuture, actualZombieFenceFuture);
         assertNotNull(adminConfig.get());
-        assertEquals("Admin should be configured with user-specified overrides",
-                "4761",
-                adminConfig.get().get(RETRY_BACKOFF_MS_CONFIG)
+        assertEquals("4761",
+                adminConfig.get().get(RETRY_BACKOFF_MS_CONFIG),
+                "Admin should be configured with user-specified overrides"
         );
 
         verifyKafkaClusterId();
         verifyGenericIsolation();
     }
 
-    @Test
-    public void testGetSinkConnectorOffsets() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testGetSinkConnectorOffsets(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
 
         String connectorClass = SampleSinkConnector.class.getName();
@@ -1877,8 +1946,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testGetSinkConnectorOffsetsAdminClientSynchronousError() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testGetSinkConnectorOffsetsAdminClientSynchronousError(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
 
         String connectorClass = SampleSinkConnector.class.getName();
@@ -1901,8 +1972,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testGetSinkConnectorOffsetsAdminClientAsynchronousError() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testGetSinkConnectorOffsetsAdminClientAsynchronousError(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
 
         String connectorClass = SampleSinkConnector.class.getName();
@@ -1946,8 +2019,10 @@ public class WorkerTest {
         });
     }
 
-    @Test
-    public void testGetSourceConnectorOffsets() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testGetSourceConnectorOffsets(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
 
         ConnectorOffsetBackingStore offsetStore = mock(ConnectorOffsetBackingStore.class);
@@ -1986,8 +2061,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testGetSourceConnectorOffsetsError() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testGetSourceConnectorOffsetsError(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
 
         ConnectorOffsetBackingStore offsetStore = mock(ConnectorOffsetBackingStore.class);
@@ -2014,8 +2091,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testAlterOffsetsConnectorDoesNotSupportOffsetAlteration() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testAlterOffsetsConnectorDoesNotSupportOffsetAlteration(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
 
         mockInternalConverters();
@@ -2024,7 +2103,8 @@ public class WorkerTest {
         worker.start();
 
         mockGenericIsolation();
-        when(plugins.newConnector(anyString())).thenReturn(sourceConnector);
+        when(plugins.newConnector(anyString(), any())).thenReturn(sourceConnector);
+        when(plugins.pluginLoader(SampleSourceConnector.class.getName(), null)).thenReturn(pluginLoader);
         when(plugins.withClassLoader(any(ClassLoader.class), any(Runnable.class))).thenAnswer(AdditionalAnswers.returnsSecondArg());
         when(sourceConnector.alterOffsets(eq(connectorProps), anyMap())).thenThrow(new UnsupportedOperationException("This connector doesn't " +
                 "support altering of offsets"));
@@ -2043,9 +2123,11 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
     @SuppressWarnings("unchecked")
-    public void testAlterOffsetsSourceConnector() throws Exception {
+    public void testAlterOffsetsSourceConnector(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
         mockInternalConverters();
         worker = new Worker(WORKER_ID, new MockTime(), plugins, config, offsetBackingStore, Executors.newSingleThreadExecutor(),
@@ -2080,9 +2162,11 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
     @SuppressWarnings("unchecked")
-    public void testAlterOffsetsSourceConnectorError() throws Exception {
+    public void testAlterOffsetsSourceConnectorError(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
         mockInternalConverters();
         worker = new Worker(WORKER_ID, new MockTime(), plugins, config, offsetBackingStore, Executors.newSingleThreadExecutor(),
@@ -2118,8 +2202,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testNormalizeSourceConnectorOffsets() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testNormalizeSourceConnectorOffsets(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         Map<Map<String, ?>, Map<String, ?>> offsets = Collections.singletonMap(
                 Collections.singletonMap("filename", "/path/to/filename"),
                 Collections.singletonMap("position", 20)
@@ -2140,8 +2226,10 @@ public class WorkerTest {
         assertInstanceOf(Long.class, normalizedOffsets.values().iterator().next().get("position"));
     }
 
-    @Test
-    public void testAlterOffsetsSinkConnectorNoDeletes() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testAlterOffsetsSinkConnectorNoDeletes(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<TopicPartition, OffsetAndMetadata>> alterOffsetsMapCapture = ArgumentCaptor.forClass(Map.class);
         Map<Map<String, ?>, Map<String, ?>> partitionOffsets = new HashMap<>();
@@ -2162,8 +2250,10 @@ public class WorkerTest {
         assertEquals(100, alterOffsetsMapCapture.getValue().get(new TopicPartition("test_topic", 20)).offset());
     }
 
-    @Test
-    public void testAlterOffsetSinkConnectorOnlyDeletes() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testAlterOffsetSinkConnectorOnlyDeletes(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Set<TopicPartition>> deleteOffsetsSetCapture = ArgumentCaptor.forClass(Set.class);
         Map<Map<String, ?>, Map<String, ?>> partitionOffsets = new HashMap<>();
@@ -2187,8 +2277,10 @@ public class WorkerTest {
         assertEquals(expectedTopicPartitionsForOffsetDelete, deleteOffsetsSetCapture.getValue());
     }
 
-    @Test
-    public void testAlterOffsetsSinkConnectorAltersAndDeletes() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testAlterOffsetsSinkConnectorAltersAndDeletes(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<TopicPartition, OffsetAndMetadata>> alterOffsetsMapCapture = ArgumentCaptor.forClass(Map.class);
         @SuppressWarnings("unchecked")
@@ -2256,8 +2348,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testAlterOffsetsSinkConnectorAlterOffsetsError() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testAlterOffsetsSinkConnectorAlterOffsetsError(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
         String connectorClass = SampleSinkConnector.class.getName();
         connectorProps.put(CONNECTOR_CLASS_CONFIG, connectorClass);
@@ -2295,8 +2389,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testAlterOffsetsSinkConnectorDeleteOffsetsError() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testAlterOffsetsSinkConnectorDeleteOffsetsError(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
         String connectorClass = SampleSinkConnector.class.getName();
         connectorProps.put(CONNECTOR_CLASS_CONFIG, connectorClass);
@@ -2344,8 +2440,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testAlterOffsetsSinkConnectorSynchronousError() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testAlterOffsetsSinkConnectorSynchronousError(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
         String connectorClass = SampleSinkConnector.class.getName();
         connectorProps.put(CONNECTOR_CLASS_CONFIG, connectorClass);
@@ -2379,9 +2477,11 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
     @SuppressWarnings("unchecked")
-    public void testResetOffsetsSourceConnectorExactlyOnceSupportEnabled() throws Exception {
+    public void testResetOffsetsSourceConnectorExactlyOnceSupportEnabled(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         Map<String, String> workerProps = new HashMap<>(this.workerProps);
         workerProps.put("exactly.once.source.support", "enabled");
         workerProps.put("bootstrap.servers", "localhost:9092");
@@ -2428,8 +2528,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testResetOffsetsSinkConnector() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testResetOffsetsSinkConnector(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
         String connectorClass = SampleSinkConnector.class.getName();
         connectorProps.put(CONNECTOR_CLASS_CONFIG, connectorClass);
@@ -2469,8 +2571,10 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testResetOffsetsSinkConnectorDeleteConsumerGroupError() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testResetOffsetsSinkConnectorDeleteConsumerGroupError(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
         String connectorClass = SampleSinkConnector.class.getName();
         connectorProps.put(CONNECTOR_CLASS_CONFIG, connectorClass);
@@ -2503,9 +2607,11 @@ public class WorkerTest {
         verifyKafkaClusterId();
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
     @SuppressWarnings("unchecked")
-    public void testModifySourceConnectorOffsetsTimeout() throws Exception {
+    public void testModifySourceConnectorOffsetsTimeout(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
         Time time = new MockTime();
         mockInternalConverters();
@@ -2531,15 +2637,17 @@ public class WorkerTest {
                 offsetWriter, Thread.currentThread().getContextClassLoader(), cb);
         ExecutionException e = assertThrows(ExecutionException.class, () -> cb.get(1000, TimeUnit.MILLISECONDS).message());
         assertEquals(ConnectException.class, e.getCause().getClass());
-        assertThat(e.getCause().getMessage(), containsString("Timed out"));
+        assertTrue(e.getCause().getMessage().contains("Timed out"));
 
         verify(offsetStore).start();
         verify(offsetStore, timeout(1000)).stop();
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testModifyOffsetsSinkConnectorTimeout() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testModifyOffsetsSinkConnectorTimeout(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         mockKafkaClusterId();
         String connectorClass = SampleSinkConnector.class.getName();
         connectorProps.put(CONNECTOR_CLASS_CONFIG, connectorClass);
@@ -2562,19 +2670,23 @@ public class WorkerTest {
                 Thread.currentThread().getContextClassLoader(), cb);
         ExecutionException e = assertThrows(ExecutionException.class, () -> cb.get(1000, TimeUnit.MILLISECONDS).message());
         assertEquals(ConnectException.class, e.getCause().getClass());
-        assertThat(e.getCause().getMessage(), containsString("Timed out"));
+        assertTrue(e.getCause().getMessage().contains("Timed out"));
 
         verify(admin, timeout(1000)).close();
         verifyKafkaClusterId();
     }
 
-    @Test
-    public void testConnectorGeneratesTooManyTasksButMaxNotEnforced() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testConnectorGeneratesTooManyTasksButMaxNotEnforced(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         testConnectorGeneratesTooManyTasks(false);
     }
 
-    @Test
-    public void testConnectorGeneratesTooManyTasksAndMaxEnforced() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testConnectorGeneratesTooManyTasksAndMaxEnforced(boolean enableTopicCreation) throws Exception {
+        setup(enableTopicCreation);
         testConnectorGeneratesTooManyTasks(true);
     }
 
@@ -2584,7 +2696,7 @@ public class WorkerTest {
         String connectorClass = SampleSourceConnector.class.getName();
         connectorProps.put(CONNECTOR_CLASS_CONFIG, connectorClass);
         connectorProps.put(TASKS_MAX_ENFORCE_CONFIG, Boolean.toString(enforced));
-        mockConnectorIsolation(connectorClass, sourceConnector);
+        mockVersionedConnectorIsolation(connectorClass, null, sourceConnector);
 
         mockExecutorRealSubmit(WorkerConnector.class);
 
@@ -2602,7 +2714,7 @@ public class WorkerTest {
         Map<String, String> taskConfig = new HashMap<>();
 
         // No warnings or exceptions when a connector generates an empty list of task configs
-        when(sourceConnector.taskConfigs(1)).thenReturn(Arrays.asList());
+        when(sourceConnector.taskConfigs(1)).thenReturn(Collections.emptyList());
         try (LogCaptureAppender logCaptureAppender = LogCaptureAppender.createAndRegister(Worker.class)) {
             connectorProps.put(TASKS_MAX_CONFIG, "1");
             List<Map<String, String>> taskConfigs = worker.connectorTaskConfigs(CONNECTOR_ID, new ConnectorConfig(plugins, connectorProps));
@@ -2611,7 +2723,7 @@ public class WorkerTest {
         }
 
         // No warnings or exceptions when a connector generates the maximum permitted number of task configs
-        when(sourceConnector.taskConfigs(1)).thenReturn(Arrays.asList(taskConfig));
+        when(sourceConnector.taskConfigs(1)).thenReturn(Collections.singletonList(taskConfig));
         when(sourceConnector.taskConfigs(2)).thenReturn(Arrays.asList(taskConfig, taskConfig));
         when(sourceConnector.taskConfigs(3)).thenReturn(Arrays.asList(taskConfig, taskConfig, taskConfig));
         try (LogCaptureAppender logCaptureAppender = LogCaptureAppender.createAndRegister(Worker.class)) {
@@ -2672,7 +2784,7 @@ public class WorkerTest {
         }
 
         // One last sanity check in case the connector is reconfigured and respects tasks.max
-        when(sourceConnector.taskConfigs(1)).thenReturn(Arrays.asList(taskConfig));
+        when(sourceConnector.taskConfigs(1)).thenReturn(Collections.singletonList(taskConfig));
         try (LogCaptureAppender logCaptureAppender = LogCaptureAppender.createAndRegister(Worker.class)) {
             connectorProps.put(TASKS_MAX_CONFIG, "1");
             List<Map<String, String>> taskConfigs = worker.connectorTaskConfigs(CONNECTOR_ID, new ConnectorConfig(plugins, connectorProps));
@@ -2685,13 +2797,17 @@ public class WorkerTest {
         worker.stop();
     }
 
-    @Test
-    public void testStartTaskWithTooManyTaskConfigsButMaxNotEnforced() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testStartTaskWithTooManyTaskConfigsButMaxNotEnforced(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         testStartTaskWithTooManyTaskConfigs(false);
     }
 
-    @Test
-    public void testStartTaskWithTooManyTaskConfigsAndMaxEnforced() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testStartTaskWithTooManyTaskConfigsAndMaxEnforced(boolean enableTopicCreation) {
+        setup(enableTopicCreation);
         testStartTaskWithTooManyTaskConfigs(true);
     }
 
@@ -2728,6 +2844,7 @@ public class WorkerTest {
                 Collections.singletonMap(TASK_ID, origProps),
                 Collections.emptyMap(),
                 Collections.emptyMap(),
+                Collections.singletonMap(connName, new AppliedConnectorConfig(connectorConfigs)),
                 Collections.emptySet(),
                 Collections.emptySet()
         );
@@ -2746,18 +2863,15 @@ public class WorkerTest {
 
                 ArgumentCaptor<Throwable> failureCaptor = ArgumentCaptor.forClass(Throwable.class);
                 verify(taskStatusListener, times(1)).onFailure(eq(TASK_ID), failureCaptor.capture());
-                assertTrue(
-                        "Expected task start exception to be TooManyTasksException, but was "
-                                + failureCaptor.getValue().getClass() + " instead",
-                        failureCaptor.getValue() instanceof TooManyTasksException
-                );
+                assertInstanceOf(TooManyTasksException.class, failureCaptor.getValue(), 
+                        "Expected task start exception to be TooManyTasksException, but was " + failureCaptor.getValue().getClass() + " instead");
 
                 tasksMaxExceededMessage = failureCaptor.getValue().getMessage();
             } else {
-                mockTaskIsolation(SampleSinkConnector.class, TestSinkTask.class, task);
-                mockTaskConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, WorkerConfig.KEY_CONVERTER_CLASS_CONFIG, taskKeyConverter);
-                mockTaskConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, WorkerConfig.VALUE_CONVERTER_CLASS_CONFIG, taskValueConverter);
-                mockTaskHeaderConverter(ClassLoaderUsage.CURRENT_CLASSLOADER, taskHeaderConverter);
+                mockVersionedTaskIsolation(SampleSinkConnector.class, TestSinkTask.class, null, sinkConnector, task);
+                mockVersionedTaskConverterFromConnector(ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG, ConnectorConfig.KEY_CONVERTER_VERSION_CONFIG, taskKeyConverter);
+                mockVersionedTaskConverterFromConnector(ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG, ConnectorConfig.VALUE_CONVERTER_VERSION_CONFIG, taskValueConverter);
+                mockVersionedTaskHeaderConverterFromConnector(taskHeaderConverter);
                 mockExecutorFakeSubmit(WorkerTask.class);
 
                 assertTrue(worker.startSinkTask(
@@ -2783,10 +2897,10 @@ public class WorkerTest {
                 + numTasks + " tasks, which is greater than "
                 + maxTasks;
         assertTrue(
+                message.startsWith(expectedPrefix),
                 "Warning/exception message '"
-                        + message + "' did not start with the expected prefix '"
-                        + expectedPrefix + "'",
-                message.startsWith(expectedPrefix)
+                                + message + "' did not start with the expected prefix '"
+                                + expectedPrefix + "'"
         );
     }
 
@@ -2867,8 +2981,20 @@ public class WorkerTest {
                        .thenReturn(returning);
     }
 
-    private void verifyTaskConverter(String converterClassConfig) {
-        verify(plugins).newConverter(any(AbstractConfig.class), eq(converterClassConfig), eq(ClassLoaderUsage.CURRENT_CLASSLOADER));
+    private void mockVersionedTaskConverterFromConnector(String converterClassConfig, String converterVersionConfig, Converter returning) {
+        when(plugins.newConverter(any(ConnectorConfig.class), eq(converterClassConfig), eq(converterVersionConfig))).thenReturn(returning);
+    }
+
+    private void verifyVersionedTaskConverterFromConnector(String converterClassConfig, String converterVersionConfig) {
+        verify(plugins).newConverter(any(ConnectorConfig.class), eq(converterClassConfig), eq(converterVersionConfig));
+    }
+
+    private void mockVersionedTaskConverterFromWorker(String converterClassConfig, String converterVersionConfig, Converter returning) {
+        when(plugins.newConverter(any(WorkerConfig.class), eq(converterClassConfig), eq(converterVersionConfig))).thenReturn(returning);
+    }
+
+    private void verifyVersionedTaskConverterFromWorker(String converterClassConfig, String converterVersionConfig) {
+        verify(plugins).newConverter(any(WorkerConfig.class), eq(converterClassConfig), eq(converterVersionConfig));
     }
 
     private void mockTaskHeaderConverter(ClassLoaderUsage classLoaderUsage, HeaderConverter returning) {
@@ -2880,8 +3006,25 @@ public class WorkerTest {
         verify(plugins).newHeaderConverter(any(AbstractConfig.class), eq(WorkerConfig.HEADER_CONVERTER_CLASS_CONFIG), eq(ClassLoaderUsage.CURRENT_CLASSLOADER));
     }
 
+    private void mockVersionedTaskHeaderConverterFromConnector(HeaderConverter returning) {
+        when(plugins.newHeaderConverter(any(ConnectorConfig.class), eq(ConnectorConfig.HEADER_CONVERTER_CLASS_CONFIG), eq(ConnectorConfig.HEADER_CONVERTER_VERSION_CONFIG)))
+               .thenReturn(returning);
+    }
+
+    private void verifyVersionedTaskHeaderConverterFromConnector() {
+        verify(plugins).newHeaderConverter(any(ConnectorConfig.class), eq(ConnectorConfig.HEADER_CONVERTER_CLASS_CONFIG), eq(ConnectorConfig.HEADER_CONVERTER_VERSION_CONFIG));
+    }
+
+    private void mockVersionedTaskHeaderConverterFromWorker(HeaderConverter returning) {
+        when(plugins.newHeaderConverter(any(WorkerConfig.class), eq(WorkerConfig.HEADER_CONVERTER_CLASS_CONFIG), eq(WorkerConfig.HEADER_CONVERTER_VERSION)))
+            .thenReturn(returning);
+    }
+
+    private void verifyVersionedTaskHeaderConverterFromWorker() {
+        verify(plugins).newHeaderConverter(any(WorkerConfig.class), eq(WorkerConfig.HEADER_CONVERTER_CLASS_CONFIG), eq(WorkerConfig.HEADER_CONVERTER_VERSION));
+    }
+
     private void mockGenericIsolation() {
-        when(plugins.connectorLoader(anyString())).thenReturn(pluginLoader);
         when(plugins.withClassLoader(pluginLoader)).thenReturn(loaderSwap);
     }
 
@@ -2896,9 +3039,23 @@ public class WorkerTest {
         when(connector.version()).thenReturn("1.0");
     }
 
+    private void mockVersionedConnectorIsolation(String connectorClass, VersionRange range, Connector connector) {
+        mockGenericIsolation();
+        when(plugins.pluginLoader(connectorClass, range)).thenReturn(pluginLoader);
+        when(plugins.newConnector(connectorClass, range)).thenReturn(connector);
+        when(connector.version()).thenReturn(range == null ? "unknown" : range.toString());
+    }
+
     private void verifyConnectorIsolation(Connector connector) {
         verifyGenericIsolation();
         verify(plugins).newConnector(anyString());
+        verify(connector, atLeastOnce()).version();
+    }
+
+    private void verifyVersionedConnectorIsolation(String connectorClass, VersionRange range, Connector connector) {
+        verifyGenericIsolation();
+        verify(plugins).pluginLoader(connectorClass, range);
+        verify(plugins).newConnector(connectorClass, range);
         verify(connector, atLeastOnce()).version();
     }
 
@@ -2909,10 +3066,27 @@ public class WorkerTest {
         when(task.version()).thenReturn("1.0");
     }
 
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void mockVersionedTaskIsolation(Class<? extends Connector> connectorClass, Class<? extends Task> taskClass, VersionRange range, Connector connector, Task task) {
+        mockGenericIsolation();
+        when(plugins.pluginLoader(connectorClass.getName(), range)).thenReturn(pluginLoader);
+        when(plugins.connectorClass(connectorClass.getName(), range)).thenReturn((Class) connectorClass);
+        when(plugins.newTask(taskClass)).thenReturn(task);
+        when(task.version()).thenReturn(range == null ? "unknown" : range.toString());
+    }
+
     private void verifyTaskIsolation(Task task) {
         verifyGenericIsolation();
         verify(plugins).connectorClass(anyString());
         verify(plugins).newTask(any());
+        verify(task).version();
+    }
+
+    private void verifyVersionedTaskIsolation(Class<? extends Connector> connectorClass, Class<? extends Task> taskClass, VersionRange range, Task task) {
+        verifyGenericIsolation();
+        verify(plugins).pluginLoader(connectorClass.getName(), range);
+        verify(plugins).connectorClass(connectorClass.getName(), range);
+        verify(plugins).newTask(taskClass);
         verify(task).version();
     }
 

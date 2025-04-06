@@ -16,57 +16,35 @@
  */
 package kafka.server
 
-import kafka.test.ClusterInstance
-import kafka.test.annotation.{ClusterConfigProperty, ClusterTest, ClusterTestDefaults, Type}
-import kafka.test.junit.ClusterTestExtensions
+import org.apache.kafka.common.test.api.{ClusterConfigProperty, ClusterTest, ClusterTestDefaults, Type}
 import org.apache.kafka.common.message.ListGroupsResponseData
 import org.apache.kafka.common.protocol.{ApiKeys, Errors}
-import org.apache.kafka.coordinator.group.consumer.ConsumerGroup.ConsumerGroupState
+import org.apache.kafka.common.test.ClusterInstance
 import org.apache.kafka.coordinator.group.classic.ClassicGroupState
-import org.apache.kafka.coordinator.group.Group
-import org.junit.jupiter.api.Assertions.{assertEquals, fail}
-import org.junit.jupiter.api.{Tag, Timeout}
-import org.junit.jupiter.api.extension.ExtendWith
+import org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroup.ConsumerGroupState
+import org.apache.kafka.coordinator.group.{Group, GroupCoordinatorConfig}
+import org.junit.jupiter.api.Assertions.assertEquals
 
-@Timeout(120)
-@ExtendWith(value = Array(classOf[ClusterTestExtensions]))
-@ClusterTestDefaults(clusterType = Type.KRAFT, brokers = 1)
-@Tag("integration")
+@ClusterTestDefaults(
+  types = Array(Type.KRAFT),
+  serverProperties = Array(
+    new ClusterConfigProperty(key = GroupCoordinatorConfig.OFFSETS_TOPIC_PARTITIONS_CONFIG, value = "1"),
+    new ClusterConfigProperty(key = GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, value = "1"),
+    new ClusterConfigProperty(key = GroupCoordinatorConfig.GROUP_INITIAL_REBALANCE_DELAY_MS_CONFIG, value = "1000")
+  )
+)
 class ListGroupsRequestTest(cluster: ClusterInstance) extends GroupCoordinatorBaseRequestTest(cluster) {
-  @ClusterTest(serverProperties = Array(
-    new ClusterConfigProperty(key = "group.coordinator.rebalance.protocols", value = "classic,consumer"),
-    new ClusterConfigProperty(key = "group.consumer.max.session.timeout.ms", value = "600000"),
-    new ClusterConfigProperty(key = "group.consumer.session.timeout.ms", value = "600000"),
-    new ClusterConfigProperty(key = "offsets.topic.num.partitions", value = "1"),
-    new ClusterConfigProperty(key = "offsets.topic.replication.factor", value = "1")
-  ))
-  def testListGroupsWithNewConsumerGroupProtocolAndNewGroupCoordinator(): Unit = {
+  @ClusterTest
+  def testListGroupsWithNewConsumerGroupProtocol(): Unit = {
     testListGroups(true)
   }
 
-  @ClusterTest(serverProperties = Array(
-    new ClusterConfigProperty(key = "group.coordinator.rebalance.protocols", value = "classic,consumer"),
-    new ClusterConfigProperty(key = "offsets.topic.num.partitions", value = "1"),
-    new ClusterConfigProperty(key = "offsets.topic.replication.factor", value = "1")
-  ))
-  def testListGroupsWithOldConsumerGroupProtocolAndNewGroupCoordinator(): Unit = {
-    testListGroups(false)
-  }
-
-  @ClusterTest(clusterType = Type.ALL, serverProperties = Array(
-    new ClusterConfigProperty(key = "group.coordinator.rebalance.protocols", value = "classic"),
-    new ClusterConfigProperty(key = "offsets.topic.num.partitions", value = "1"),
-    new ClusterConfigProperty(key = "offsets.topic.replication.factor", value = "1")
-  ))
-  def testListGroupsWithOldConsumerGroupProtocolAndOldGroupCoordinator(): Unit = {
+  @ClusterTest
+  def testListGroupsWithOldConsumerGroupProtocol(): Unit = {
     testListGroups(false)
   }
 
   private def testListGroups(useNewProtocol: Boolean): Unit = {
-    if (!isNewGroupCoordinatorEnabled && useNewProtocol) {
-      fail("Cannot use the new protocol with the old group coordinator.")
-    }
-
     // Creates the __consumer_offsets topics because it won't be created automatically
     // in this test because it does not use FindCoordinator API.
     createOffsetsTopic()
@@ -113,7 +91,7 @@ class ListGroupsRequestTest(cluster: ClusterInstance) extends GroupCoordinatorBa
 
       if (useNewProtocol) {
         // Create grp-4 in new protocol. Grp-4 is in STABLE state.
-        memberId1InGroup4 = joinConsumerGroup("grp-4", true)._1
+        memberId1InGroup4 = joinConsumerGroup("grp-4", useNewProtocol = true)._1
         response4 = new ListGroupsResponseData.ListedGroup()
           .setGroupId("grp-4")
           .setProtocolType("consumer")
@@ -121,8 +99,8 @@ class ListGroupsRequestTest(cluster: ClusterInstance) extends GroupCoordinatorBa
           .setGroupType(if (version >= 5) Group.GroupType.CONSUMER.toString else "")
 
         // Create grp-5 in new protocol. Then member 2 joins grp-5, triggering a rebalance. Grp-5 is in RECONCILING state.
-        memberId1InGroup5 = joinConsumerGroup("grp-5", true)._1
-        memberId2InGroup5 = joinConsumerGroup("grp-5", true)._1
+        memberId1InGroup5 = joinConsumerGroup("grp-5", useNewProtocol = true)._1
+        memberId2InGroup5 = joinConsumerGroup("grp-5", useNewProtocol = true)._1
         response5 = new ListGroupsResponseData.ListedGroup()
           .setGroupId("grp-5")
           .setProtocolType("consumer")
@@ -130,7 +108,7 @@ class ListGroupsRequestTest(cluster: ClusterInstance) extends GroupCoordinatorBa
           .setGroupType(if (version >= 5) Group.GroupType.CONSUMER.toString else "")
 
         // Create grp-6 in new protocol. Then member 1 leaves grp-6. Grp-6 is in Empty state.
-        memberId1InGroup6 = joinConsumerGroup("grp-6", true)._1
+        memberId1InGroup6 = joinConsumerGroup("grp-6", useNewProtocol = true)._1
         leaveGroup(groupId = "grp-6", memberId = memberId1InGroup6, useNewProtocol = true, ApiKeys.LEAVE_GROUP.latestVersion(isUnstableApiEnabled))
         response6 = new ListGroupsResponseData.ListedGroup()
           .setGroupId("grp-6")

@@ -16,31 +16,13 @@
  */
 package org.apache.kafka.clients.admin.internals;
 
-import static java.util.Collections.emptyList;
-import static java.util.Collections.emptySet;
-import static java.util.Collections.singleton;
-import static java.util.Collections.singletonList;
-import static org.apache.kafka.common.utils.Utils.mkSet;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedHashSet;
-import java.util.Optional;
-import java.util.Set;
-
 import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.MemberAssignment;
 import org.apache.kafka.clients.admin.MemberDescription;
 import org.apache.kafka.clients.consumer.ConsumerPartitionAssignor.Assignment;
 import org.apache.kafka.clients.consumer.internals.ConsumerProtocol;
 import org.apache.kafka.common.ConsumerGroupState;
+import org.apache.kafka.common.GroupState;
 import org.apache.kafka.common.GroupType;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
@@ -48,6 +30,7 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.GroupAuthorizationException;
 import org.apache.kafka.common.errors.GroupIdNotFoundException;
 import org.apache.kafka.common.errors.InvalidGroupIdException;
+import org.apache.kafka.common.errors.TopicAuthorizationException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.message.ConsumerGroupDescribeRequestData;
 import org.apache.kafka.common.message.ConsumerGroupDescribeResponseData;
@@ -61,9 +44,29 @@ import org.apache.kafka.common.requests.ConsumerGroupDescribeResponse;
 import org.apache.kafka.common.requests.DescribeGroupsResponse;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Utils;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+
+import static java.util.Collections.emptyList;
+import static java.util.Collections.emptySet;
+import static java.util.Collections.singleton;
+import static java.util.Collections.singletonList;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class DescribeConsumerGroupsHandlerTest {
 
@@ -152,29 +155,46 @@ public class DescribeConsumerGroupsHandlerTest {
     @Test
     public void testSuccessfulHandleConsumerGroupResponse() {
         DescribeConsumerGroupsHandler handler = new DescribeConsumerGroupsHandler(false, logContext);
-        Collection<MemberDescription> members = singletonList(new MemberDescription(
-            "memberId",
-            Optional.of("instanceId"),
-            "clientId",
-            "host",
-            new MemberAssignment(mkSet(
-                new TopicPartition("foo", 0),
-                new TopicPartition("bar",  1))
+        Collection<MemberDescription> members = List.of(
+            new MemberDescription(
+                "memberId",
+                Optional.of("instanceId"),
+                "clientId",
+                "host",
+                new MemberAssignment(Set.of(
+                    new TopicPartition("foo", 0)
+                )),
+                Optional.of(new MemberAssignment(Set.of(
+                    new TopicPartition("foo", 1)
+                ))),
+                Optional.of(10),
+                Optional.of(true)
             ),
-            Optional.of(new MemberAssignment(mkSet(
-                new TopicPartition("foo", 1),
-                new TopicPartition("bar",  2)
-            )))
-        ));
+            new MemberDescription(
+                "memberId-classic",
+                Optional.of("instanceId-classic"),
+                "clientId-classic",
+                "host",
+                new MemberAssignment(Set.of(
+                    new TopicPartition("bar", 0)
+                )),
+                Optional.of(new MemberAssignment(Set.of(
+                    new TopicPartition("bar", 1)
+                ))),
+                Optional.of(9),
+                Optional.of(false)
+            ));
         ConsumerGroupDescription expected = new ConsumerGroupDescription(
             groupId1,
             false,
             members,
             "range",
             GroupType.CONSUMER,
-            ConsumerGroupState.STABLE,
+            GroupState.STABLE,
             coordinator,
-            Collections.emptySet()
+            Collections.emptySet(),
+            Optional.of(10),
+            Optional.of(10)
         );
         AdminApiHandler.ApiResult<CoordinatorKey, ConsumerGroupDescription> result = handler.handleResponse(
             coordinator,
@@ -189,7 +209,7 @@ public class DescribeConsumerGroupsHandlerTest {
                             .setAssignmentEpoch(10)
                             .setAssignorName("range")
                             .setAuthorizedOperations(Utils.to32BitField(emptySet()))
-                            .setMembers(singletonList(
+                            .setMembers(List.of(
                                 new ConsumerGroupDescribeResponseData.Member()
                                     .setMemberId("memberId")
                                     .setInstanceId("instanceId")
@@ -200,27 +220,44 @@ public class DescribeConsumerGroupsHandlerTest {
                                     .setSubscribedTopicNames(singletonList("foo"))
                                     .setSubscribedTopicRegex("regex")
                                     .setAssignment(new ConsumerGroupDescribeResponseData.Assignment()
-                                        .setTopicPartitions(Arrays.asList(
+                                        .setTopicPartitions(List.of(
                                             new ConsumerGroupDescribeResponseData.TopicPartitions()
                                                 .setTopicId(Uuid.randomUuid())
                                                 .setTopicName("foo")
-                                                .setPartitions(Collections.singletonList(0)),
+                                                .setPartitions(Collections.singletonList(0))
+                                        )))
+                                    .setTargetAssignment(new ConsumerGroupDescribeResponseData.Assignment()
+                                        .setTopicPartitions(List.of(
+                                            new ConsumerGroupDescribeResponseData.TopicPartitions()
+                                                .setTopicId(Uuid.randomUuid())
+                                                .setTopicName("foo")
+                                                .setPartitions(Collections.singletonList(1))
+                                        )))
+                                    .setMemberType((byte) 1),
+                                new ConsumerGroupDescribeResponseData.Member()
+                                    .setMemberId("memberId-classic")
+                                    .setInstanceId("instanceId-classic")
+                                    .setClientHost("host")
+                                    .setClientId("clientId-classic")
+                                    .setMemberEpoch(9)
+                                    .setRackId("rackid")
+                                    .setSubscribedTopicNames(singletonList("bar"))
+                                    .setSubscribedTopicRegex("regex")
+                                    .setAssignment(new ConsumerGroupDescribeResponseData.Assignment()
+                                        .setTopicPartitions(List.of(
+                                            new ConsumerGroupDescribeResponseData.TopicPartitions()
+                                                .setTopicId(Uuid.randomUuid())
+                                                .setTopicName("bar")
+                                                .setPartitions(Collections.singletonList(0))
+                                        )))
+                                    .setTargetAssignment(new ConsumerGroupDescribeResponseData.Assignment()
+                                        .setTopicPartitions(List.of(
                                             new ConsumerGroupDescribeResponseData.TopicPartitions()
                                                 .setTopicId(Uuid.randomUuid())
                                                 .setTopicName("bar")
                                                 .setPartitions(Collections.singletonList(1))
                                         )))
-                                    .setTargetAssignment(new ConsumerGroupDescribeResponseData.Assignment()
-                                        .setTopicPartitions(Arrays.asList(
-                                            new ConsumerGroupDescribeResponseData.TopicPartitions()
-                                                .setTopicId(Uuid.randomUuid())
-                                                .setTopicName("foo")
-                                                .setPartitions(Collections.singletonList(1)),
-                                            new ConsumerGroupDescribeResponseData.TopicPartitions()
-                                                .setTopicId(Uuid.randomUuid())
-                                                .setTopicName("bar")
-                                                .setPartitions(Collections.singletonList(2))
-                                        )))
+                                    .setMemberType((byte) 0)
                             ))
                     ))
             )
@@ -232,9 +269,13 @@ public class DescribeConsumerGroupsHandlerTest {
     public void testSuccessfulHandleClassicGroupResponse() {
         Collection<MemberDescription> members = singletonList(new MemberDescription(
                 "memberId",
+                Optional.empty(),
                 "clientId",
                 "host",
-                new MemberAssignment(tps)));
+                new MemberAssignment(tps),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty()));
         ConsumerGroupDescription expected = new ConsumerGroupDescription(
                 groupId1,
                 true,
@@ -281,6 +322,7 @@ public class DescribeConsumerGroupsHandlerTest {
     @Test
     public void testFailedHandleConsumerGroupResponse() {
         assertFailed(GroupAuthorizationException.class, handleConsumerGroupWithError(Errors.GROUP_AUTHORIZATION_FAILED));
+        assertFailed(TopicAuthorizationException.class, handleConsumerGroupWithError(Errors.TOPIC_AUTHORIZATION_FAILED));
         assertFailed(InvalidGroupIdException.class, handleConsumerGroupWithError(Errors.INVALID_GROUP_ID));
     }
 
@@ -296,7 +338,7 @@ public class DescribeConsumerGroupsHandlerTest {
     }
 
     private DescribeGroupsResponse buildResponse(Errors error, String protocolType) {
-        DescribeGroupsResponse response = new DescribeGroupsResponse(
+        return new DescribeGroupsResponse(
                 new DescribeGroupsResponseData()
                     .setGroups(singletonList(
                             new DescribedGroup()
@@ -314,7 +356,6 @@ public class DescribeConsumerGroupsHandlerTest {
                                             .setMemberAssignment(ConsumerProtocol.serializeAssignment(
                                                     new Assignment(new ArrayList<>(tps))).array())
                                             )))));
-        return response;
     }
 
     private AdminApiHandler.ApiResult<CoordinatorKey, ConsumerGroupDescription> handleClassicGroupWithError(

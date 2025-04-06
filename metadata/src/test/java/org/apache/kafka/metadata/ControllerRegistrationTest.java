@@ -25,12 +25,11 @@ import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.image.writer.ImageWriterOptions;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.MetadataVersion;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,13 +41,13 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 @Timeout(value = 40)
 public class ControllerRegistrationTest {
     static <K, V> Map<K, V> doubleMap(K k1, V v1, K k2, V v2) {
-        HashMap<K, V> map = new HashMap<>();
+        LinkedHashMap<K, V> map = new LinkedHashMap<>();
         map.put(k1, v1);
         map.put(k2, v2);
-        return Collections.unmodifiableMap(map);
+        return map;
     }
 
-    private static final List<ControllerRegistration> REGISTRATIONS = Arrays.asList(
+    private static final List<ControllerRegistration> REGISTRATIONS = List.of(
         new ControllerRegistration.Builder().
             setId(0).
             setIncarnationId(Uuid.fromString("ycRmGrOFQru7HXf6fOybZQ")).
@@ -56,7 +55,7 @@ public class ControllerRegistrationTest {
             setListeners(doubleMap(
                 "PLAINTEXT", new Endpoint("PLAINTEXT", SecurityProtocol.PLAINTEXT, "localhost", 9107),
                 "SSL", new Endpoint("SSL", SecurityProtocol.SSL, "localhost", 9207))).
-            setSupportedFeatures(Collections.singletonMap(MetadataVersion.FEATURE_NAME, VersionRange.of(1, 10))).
+            setSupportedFeatures(Map.of(MetadataVersion.FEATURE_NAME, VersionRange.of(1, 10))).
             build(),
         new ControllerRegistration.Builder().
             setId(1).
@@ -65,7 +64,7 @@ public class ControllerRegistrationTest {
             setListeners(doubleMap(
                 "PLAINTEXT", new Endpoint("PLAINTEXT", SecurityProtocol.PLAINTEXT, "localhost", 9108),
                 "SSL", new Endpoint("SSL", SecurityProtocol.SSL, "localhost", 9208))).
-            setSupportedFeatures(Collections.singletonMap(MetadataVersion.FEATURE_NAME, VersionRange.of(1, 10))).
+            setSupportedFeatures(Map.of(MetadataVersion.FEATURE_NAME, VersionRange.of(1, 10))).
             build(),
         new ControllerRegistration.Builder().
             setId(2).
@@ -74,7 +73,7 @@ public class ControllerRegistrationTest {
             setListeners(doubleMap(
                 "PLAINTEXT", new Endpoint("PLAINTEXT", SecurityProtocol.PLAINTEXT, "localhost", 9109),
                 "SSL", new Endpoint("SSL", SecurityProtocol.SSL, "localhost", 9209))).
-            setSupportedFeatures(Collections.singletonMap(MetadataVersion.FEATURE_NAME, VersionRange.of(1, 10))).
+            setSupportedFeatures(Map.of(MetadataVersion.FEATURE_NAME, VersionRange.of(1, 10))).
             build()
     );
 
@@ -117,12 +116,12 @@ public class ControllerRegistrationTest {
 
     private void testRoundTrip(ControllerRegistration registration) {
         ApiMessageAndVersion messageAndVersion = registration.
-            toRecord(new ImageWriterOptions.Builder().build());
+            toRecord(new ImageWriterOptions.Builder(MetadataVersion.latestProduction()).build());
         ControllerRegistration registration2 = new ControllerRegistration.Builder(
             (RegisterControllerRecord) messageAndVersion.message()).build();
         assertEquals(registration, registration2);
         ApiMessageAndVersion messageAndVersion2 = registration2.
-            toRecord(new ImageWriterOptions.Builder().build());
+            toRecord(new ImageWriterOptions.Builder(MetadataVersion.latestProduction()).build());
         assertEquals(messageAndVersion, messageAndVersion2);
     }
 

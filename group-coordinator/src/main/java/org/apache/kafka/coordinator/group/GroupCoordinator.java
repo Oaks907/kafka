@@ -22,6 +22,8 @@ import org.apache.kafka.common.message.ConsumerGroupHeartbeatRequestData;
 import org.apache.kafka.common.message.ConsumerGroupHeartbeatResponseData;
 import org.apache.kafka.common.message.DeleteGroupsResponseData;
 import org.apache.kafka.common.message.DescribeGroupsResponseData;
+import org.apache.kafka.common.message.DescribeShareGroupOffsetsRequestData;
+import org.apache.kafka.common.message.DescribeShareGroupOffsetsResponseData;
 import org.apache.kafka.common.message.HeartbeatRequestData;
 import org.apache.kafka.common.message.HeartbeatResponseData;
 import org.apache.kafka.common.message.JoinGroupRequestData;
@@ -36,6 +38,11 @@ import org.apache.kafka.common.message.OffsetDeleteRequestData;
 import org.apache.kafka.common.message.OffsetDeleteResponseData;
 import org.apache.kafka.common.message.OffsetFetchRequestData;
 import org.apache.kafka.common.message.OffsetFetchResponseData;
+import org.apache.kafka.common.message.ShareGroupDescribeResponseData;
+import org.apache.kafka.common.message.ShareGroupHeartbeatRequestData;
+import org.apache.kafka.common.message.ShareGroupHeartbeatResponseData;
+import org.apache.kafka.common.message.StreamsGroupDescribeResponseData;
+import org.apache.kafka.common.message.StreamsGroupHeartbeatRequestData;
 import org.apache.kafka.common.message.SyncGroupRequestData;
 import org.apache.kafka.common.message.SyncGroupResponseData;
 import org.apache.kafka.common.message.TxnOffsetCommitRequestData;
@@ -43,11 +50,13 @@ import org.apache.kafka.common.message.TxnOffsetCommitResponseData;
 import org.apache.kafka.common.requests.RequestContext;
 import org.apache.kafka.common.requests.TransactionResult;
 import org.apache.kafka.common.utils.BufferSupplier;
+import org.apache.kafka.coordinator.group.streams.StreamsGroupHeartbeatResult;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
@@ -71,6 +80,34 @@ public interface GroupCoordinator {
     CompletableFuture<ConsumerGroupHeartbeatResponseData> consumerGroupHeartbeat(
         RequestContext context,
         ConsumerGroupHeartbeatRequestData request
+    );
+
+    /**
+     * Heartbeat to a Streams Group.
+     *
+     * @param context           The request context.
+     * @param request           The StreamsGroupHeartbeatResponseData data.
+     *
+     * @return  A future yielding the response together with internal topics to create.
+     *          The error code(s) of the response are set to indicate the error(s) occurred during the execution.
+     */
+    CompletableFuture<StreamsGroupHeartbeatResult> streamsGroupHeartbeat(
+        RequestContext context,
+        StreamsGroupHeartbeatRequestData request
+    );
+
+    /**
+     * Heartbeat to a Share Group.
+     *
+     * @param context           The request context.
+     * @param request           The ShareGroupHeartbeatResponse data.
+     *
+     * @return  A future yielding the response.
+     *          The error code(s) of the response are set to indicate the error(s) occurred during the execution.
+     */
+    CompletableFuture<ShareGroupHeartbeatResponseData> shareGroupHeartbeat(
+        RequestContext context,
+        ShareGroupHeartbeatRequestData request
     );
 
     /**
@@ -175,6 +212,32 @@ public interface GroupCoordinator {
     );
 
     /**
+     * Describe streams groups.
+     *
+     * @param context           The coordinator request context.
+     * @param groupIds          The group ids.
+     *
+     * @return A future yielding the results or an exception.
+     */
+    CompletableFuture<List<StreamsGroupDescribeResponseData.DescribedGroup>> streamsGroupDescribe(
+        RequestContext context,
+        List<String> groupIds
+    );
+
+    /**
+     * Describe share groups.
+     *
+     * @param context           The coordinator request context.
+     * @param groupIds          The group ids.
+     *
+     * @return A future yielding the results or an exception.
+     */
+    CompletableFuture<List<ShareGroupDescribeResponseData.DescribedGroup>> shareGroupDescribe(
+        RequestContext context,
+        List<String> groupIds
+    );
+
+    /**
      * Delete Groups.
      *
      * @param context           The request context.
@@ -218,6 +281,34 @@ public interface GroupCoordinator {
         RequestContext context,
         OffsetFetchRequestData.OffsetFetchRequestGroup request,
         boolean requireStable
+    );
+
+    /**
+     * Describe the Share Group Offsets for a given group.
+     *
+     * @param context           The request context
+     * @param request           The DescribeShareGroupOffsetsRequestGroup request.
+     *
+     * @return  A future yielding the results.
+     *          The error codes of the response are set to indicate the errors occurred during the execution.
+     */
+    CompletableFuture<DescribeShareGroupOffsetsResponseData.DescribeShareGroupOffsetsResponseGroup> describeShareGroupOffsets(
+        RequestContext context,
+        DescribeShareGroupOffsetsRequestData.DescribeShareGroupOffsetsRequestGroup request
+    );
+
+    /**
+     * Describe all Share Group Offsets for a given group.
+     *
+     * @param context           The request context
+     * @param request           The DescribeShareGroupOffsetsRequestGroup request.
+     *
+     * @return  A future yielding the results.
+     *          The error codes of the response are set to indicate the errors occurred during the execution.
+     */
+    CompletableFuture<DescribeShareGroupOffsetsResponseData.DescribeShareGroupOffsetsResponseGroup> describeShareGroupAllOffsets(
+        RequestContext context,
+        DescribeShareGroupOffsetsRequestData.DescribeShareGroupOffsetsRequestGroup request
     );
 
     /**
@@ -301,19 +392,6 @@ public interface GroupCoordinator {
     int partitionFor(String groupId);
 
     /**
-     * Commit or abort the pending transactional offsets for the given partitions.
-     *
-     * @param producerId        The producer id.
-     * @param partitions        The partitions.
-     * @param transactionResult The result of the transaction.
-     */
-    void onTransactionCompleted(
-        long producerId,
-        Iterable<TopicPartition> partitions,
-        TransactionResult transactionResult
-    );
-
-    /**
      * Remove the provided deleted partitions offsets.
      *
      * @param topicPartitions   The deleted partitions.
@@ -370,6 +448,22 @@ public interface GroupCoordinator {
      * @return Properties of the internal topic.
      */
     Properties groupMetadataTopicConfigs();
+
+    /**
+     * Return the configuration of the provided group.
+     *
+     * @param groupId       The group id.
+     * @return The group config.
+     */
+    Optional<GroupConfig> groupConfig(String groupId);
+
+    /**
+     * Update the configuration of the provided group.
+     *
+     * @param groupId           The group id.
+     * @param newGroupConfig    The new group config
+     */
+    void updateGroupConfig(String groupId, Properties newGroupConfig);
 
     /**
      * Startup the group coordinator.

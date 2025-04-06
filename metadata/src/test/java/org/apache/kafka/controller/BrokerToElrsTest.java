@@ -21,9 +21,11 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.server.common.TopicIdPartition;
 import org.apache.kafka.timeline.SnapshotRegistry;
+
 import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -35,11 +37,7 @@ public class BrokerToElrsTest {
     };
 
     private static Set<TopicIdPartition> toSet(TopicIdPartition... partitions) {
-        HashSet<TopicIdPartition> set = new HashSet<>();
-        for (TopicIdPartition partition : partitions) {
-            set.add(partition);
-        }
-        return set;
+        return new HashSet<>(List.of(partitions));
     }
 
     private static Set<TopicIdPartition> toSet(BrokersToIsrs.PartitionsOnReplicaIterator iterator) {

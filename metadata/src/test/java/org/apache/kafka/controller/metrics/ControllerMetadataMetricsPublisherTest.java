@@ -17,8 +17,6 @@
 
 package org.apache.kafka.controller.metrics;
 
-import java.util.Optional;
-
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.image.AclsImage;
 import org.apache.kafka.image.ClientQuotasImage;
@@ -38,8 +36,12 @@ import org.apache.kafka.image.loader.SnapshotManifest;
 import org.apache.kafka.image.writer.ImageReWriter;
 import org.apache.kafka.image.writer.ImageWriterOptions;
 import org.apache.kafka.raft.LeaderAndEpoch;
+import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.server.fault.MockFaultHandler;
+
 import org.junit.jupiter.api.Test;
+
+import java.util.Optional;
 
 import static org.apache.kafka.controller.metrics.ControllerMetricsTestUtils.FakePartitionRegistrationType.NON_PREFERRED_LEADER;
 import static org.apache.kafka.controller.metrics.ControllerMetricsTestUtils.FakePartitionRegistrationType.NORMAL;
@@ -144,9 +146,7 @@ public class ControllerMetadataMetricsPublisherTest {
         try (TestEnv env = new TestEnv()) {
             MetadataDelta delta = new MetadataDelta(MetadataImage.EMPTY);
             ImageReWriter writer = new ImageReWriter(delta);
-            IMAGE1.write(writer, new ImageWriterOptions.Builder().
-                    setMetadataVersion(delta.image().features().metadataVersion()).
-                    build());
+            IMAGE1.write(writer, new ImageWriterOptions.Builder(MetadataVersion.MINIMUM_VERSION).build());
             env.publisher.onMetadataUpdate(delta, IMAGE1, fakeManifest(true));
             assertEquals(0, env.metrics.activeBrokerCount());
             assertEquals(3, env.metrics.globalTopicCount());

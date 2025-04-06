@@ -24,10 +24,9 @@ import org.apache.kafka.common.message.OffsetCommitResponseData;
 import org.apache.kafka.common.message.OffsetCommitResponseData.OffsetCommitResponsePartition;
 import org.apache.kafka.common.message.OffsetCommitResponseData.OffsetCommitResponseTopic;
 import org.apache.kafka.common.protocol.ApiKeys;
-import org.apache.kafka.common.protocol.ByteBufferAccessor;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.protocol.Readable;
 
-import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -101,11 +100,11 @@ public class OffsetCommitRequest extends AbstractRequest {
                 .setName(topic.name());
             response.topics().add(responseTopic);
 
-            topic.partitions().forEach(partition -> {
+            topic.partitions().forEach(partition ->
                 responseTopic.partitions().add(new OffsetCommitResponsePartition()
                     .setPartitionIndex(partition.partitionIndex())
-                    .setErrorCode(error.code()));
-            });
+                    .setErrorCode(error.code()))
+            );
         });
         return response;
     }
@@ -121,7 +120,7 @@ public class OffsetCommitRequest extends AbstractRequest {
         return getErrorResponse(AbstractResponse.DEFAULT_THROTTLE_TIME, e);
     }
 
-    public static OffsetCommitRequest parse(ByteBuffer buffer, short version) {
-        return new OffsetCommitRequest(new OffsetCommitRequestData(new ByteBufferAccessor(buffer), version), version);
+    public static OffsetCommitRequest parse(Readable readable, short version) {
+        return new OffsetCommitRequest(new OffsetCommitRequestData(readable, version), version);
     }
 }

@@ -17,19 +17,21 @@
 
 package kafka.server.metadata
 
-import java.util.{OptionalInt, Properties}
+import java.util.OptionalInt
 import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.log.LogManager
-import kafka.server.{BrokerLifecycleManager, KafkaConfig, ReplicaManager, RequestLocal}
+import kafka.server.{KafkaConfig, ReplicaManager}
 import kafka.utils.Logging
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.errors.TimeoutException
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.coordinator.group.GroupCoordinator
+import org.apache.kafka.coordinator.share.ShareCoordinator
 import org.apache.kafka.image.loader.LoaderManifest
 import org.apache.kafka.image.publisher.MetadataPublisher
 import org.apache.kafka.image.{MetadataDelta, MetadataImage, TopicDelta}
-import org.apache.kafka.server.common.MetadataVersion
+import org.apache.kafka.metadata.publisher.AclPublisher
+import org.apache.kafka.server.common.RequestLocal
 import org.apache.kafka.server.fault.FaultHandler
 
 import java.util.concurrent.CompletableFuture
@@ -67,14 +69,15 @@ class BrokerMetadataPublisher(
   replicaManager: ReplicaManager,
   groupCoordinator: GroupCoordinator,
   txnCoordinator: TransactionCoordinator,
+  shareCoordinator: Option[ShareCoordinator],
   var dynamicConfigPublisher: DynamicConfigPublisher,
   dynamicClientQuotaPublisher: DynamicClientQuotaPublisher,
+  dynamicTopicClusterQuotaPublisher: DynamicTopicClusterQuotaPublisher,
   scramPublisher: ScramPublisher,
   delegationTokenPublisher: DelegationTokenPublisher,
   aclPublisher: AclPublisher,
   fatalFaultHandler: FaultHandler,
   metadataPublishingFaultHandler: FaultHandler,
-  brokerLifecycleManager: BrokerLifecycleManager,
 ) extends MetadataPublisher with Logging {
   logIdent = s"[BrokerMetadataPublisher id=${config.nodeId}] "
 
@@ -117,7 +120,7 @@ class BrokerMetadataPublisher(
       // Publish the new metadata image to the metadata cache.
       metadataCache.setImage(newImage)
 
-      val metadataVersionLogMsg = s"metadata.version ${newImage.features().metadataVersion()}"
+      def metadataVersionLogMsg = s"metadata.version ${newImage.features().metadataVersion()}"
 
       if (_firstPublish) {
         info(s"Publishing initial metadata at offset $highestOffsetAndEpoch with $metadataVersionLogMsg.")
@@ -127,21 +130,6 @@ class BrokerMetadataPublisher(
         initializeManagers(newImage)
       } else if (isDebugEnabled) {
         debug(s"Publishing metadata at offset $highestOffsetAndEpoch with $metadataVersionLogMsg.")
-      }
-
-      Option(delta.featuresDelta()).foreach { featuresDelta =>
-        featuresDelta.metadataVersionChange().ifPresent{ metadataVersion =>
-          info(s"Updating metadata.version to ${metadataVersion.featureLevel()} at offset $highestOffsetAndEpoch.")
-          val currentMetadataVersion = delta.image().features().metadataVersion()
-          if (currentMetadataVersion.isLessThan(MetadataVersion.IBP_3_7_IV2) && metadataVersion.isAtLeast(MetadataVersion.IBP_3_7_IV2)) {
-            info(
-              s"""Resending BrokerRegistration with existing incarnation-id to inform the
-                 |controller about log directories in the broker following metadata update:
-                 |previousMetadataVersion: ${delta.image().features().metadataVersion()}
-                 |newMetadataVersion: $metadataVersion""".stripMargin.linesIterator.mkString(" ").trim)
-            brokerLifecycleManager.handleKraftJBODMetadataVersionUpdate()
-          }
-        }
       }
 
       // Apply topic deltas.
@@ -176,6 +164,19 @@ class BrokerMetadataPublisher(
           case t: Throwable => metadataPublishingFaultHandler.handleFault("Error updating txn " +
             s"coordinator with local changes in $deltaName", t)
         }
+        if (shareCoordinator.isDefined) {
+          try {
+            updateCoordinator(newImage,
+              delta,
+              Topic.SHARE_GROUP_STATE_TOPIC_NAME,
+              shareCoordinator.get.onElection,
+              (partitionIndex, leaderEpochOpt) => shareCoordinator.get.onResignation(partitionIndex, toOptionalInt(leaderEpochOpt))
+            )
+          } catch {
+            case t: Throwable => metadataPublishingFaultHandler.handleFault("Error updating share " +
+              s"coordinator with local changes in $deltaName", t)
+          }
+        }
         try {
           // Notify the group coordinator about deleted topics.
           val deletedTopicPartitions = new mutable.ArrayBuffer[TopicPartition]()
@@ -186,7 +187,7 @@ class BrokerMetadataPublisher(
             }
           }
           if (deletedTopicPartitions.nonEmpty) {
-            groupCoordinator.onPartitionsDeleted(deletedTopicPartitions.asJava, RequestLocal.NoCaching.bufferSupplier)
+            groupCoordinator.onPartitionsDeleted(deletedTopicPartitions.asJava, RequestLocal.noCaching.bufferSupplier)
           }
         } catch {
           case t: Throwable => metadataPublishingFaultHandler.handleFault("Error updating group " +
@@ -199,6 +200,9 @@ class BrokerMetadataPublisher(
 
       // Apply client quotas delta.
       dynamicClientQuotaPublisher.onMetadataUpdate(delta, newImage)
+
+      // Apply topic or cluster quotas delta.
+      dynamicTopicClusterQuotaPublisher.onMetadataUpdate(delta, newImage)
 
       // Apply SCRAM delta.
       scramPublisher.onMetadataUpdate(delta, newImage)
@@ -214,6 +218,14 @@ class BrokerMetadataPublisher(
         groupCoordinator.onNewMetadataImage(newImage, delta)
       } catch {
         case t: Throwable => metadataPublishingFaultHandler.handleFault("Error updating group " +
+          s"coordinator with local changes in $deltaName", t)
+      }
+
+      try {
+        // Propagate the new image to the share coordinator.
+        shareCoordinator.foreach(coordinator => coordinator.onNewMetadataImage(newImage, delta))
+      } catch {
+        case t: Throwable => metadataPublishingFaultHandler.handleFault("Error updating share " +
           s"coordinator with local changes in $deltaName", t)
       }
 
@@ -234,10 +246,6 @@ class BrokerMetadataPublisher(
       case Some(leaderEpoch) => OptionalInt.of(leaderEpoch)
       case None => OptionalInt.empty
     }
-  }
-
-  def reloadUpdatedFilesWithoutConfigChange(props: Properties): Unit = {
-    config.dynamicConfig.reloadUpdatedFilesWithoutConfigChange(props)
   }
 
   /**
@@ -290,7 +298,7 @@ class BrokerMetadataPublisher(
       // Start log manager, which will perform (potentially lengthy)
       // recovery-from-unclean-shutdown if required.
       logManager.startup(
-        metadataCache.getAllTopics(),
+        metadataCache.getAllTopics().asScala,
         isStray = log => LogManager.isStrayKraftReplica(brokerId, newImage.topics(), log)
       )
 
@@ -318,16 +326,25 @@ class BrokerMetadataPublisher(
     try {
       // Start the group coordinator.
       groupCoordinator.startup(() => metadataCache.numPartitions(Topic.GROUP_METADATA_TOPIC_NAME)
-        .getOrElse(config.offsetsTopicPartitions))
+        .orElse(config.groupCoordinatorConfig.offsetsTopicPartitions))
     } catch {
       case t: Throwable => fatalFaultHandler.handleFault("Error starting GroupCoordinator", t)
     }
     try {
       // Start the transaction coordinator.
       txnCoordinator.startup(() => metadataCache.numPartitions(
-        Topic.TRANSACTION_STATE_TOPIC_NAME).getOrElse(config.transactionTopicPartitions))
+        Topic.TRANSACTION_STATE_TOPIC_NAME).orElse(config.transactionLogConfig.transactionTopicPartitions))
     } catch {
       case t: Throwable => fatalFaultHandler.handleFault("Error starting TransactionCoordinator", t)
+    }
+    if (config.shareGroupConfig.isShareGroupEnabled && shareCoordinator.isDefined) {
+      try {
+        // Start the share coordinator.
+        shareCoordinator.get.startup(() => metadataCache.numPartitions(
+          Topic.SHARE_GROUP_STATE_TOPIC_NAME).orElse(config.shareCoordinatorConfig.shareCoordinatorStateTopicNumPartitions()))
+      } catch {
+        case t: Throwable => fatalFaultHandler.handleFault("Error starting Share coordinator", t)
+      }
     }
   }
 

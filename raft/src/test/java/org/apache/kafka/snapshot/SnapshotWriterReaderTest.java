@@ -16,27 +16,28 @@
  */
 package org.apache.kafka.snapshot;
 
+import org.apache.kafka.common.message.SnapshotFooterRecord;
+import org.apache.kafka.common.message.SnapshotHeaderRecord;
+import org.apache.kafka.common.record.ControlRecordUtils;
+import org.apache.kafka.common.record.Record;
+import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.utils.BufferSupplier;
+import org.apache.kafka.common.utils.BufferSupplier.GrowableBufferSupplier;
+import org.apache.kafka.raft.Batch;
+import org.apache.kafka.raft.ControlRecord;
+import org.apache.kafka.raft.OffsetAndEpoch;
+import org.apache.kafka.raft.RaftClientTestContext;
+import org.apache.kafka.raft.internals.StringSerde;
+
+import org.junit.jupiter.api.Test;
+
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Random;
 import java.util.Set;
-import org.apache.kafka.common.message.SnapshotFooterRecord;
-import org.apache.kafka.common.message.SnapshotHeaderRecord;
-import org.apache.kafka.common.record.ControlRecordUtils;
-import org.apache.kafka.common.record.Record;
-import org.apache.kafka.common.record.RecordBatch;
-import org.apache.kafka.common.utils.BufferSupplier.GrowableBufferSupplier;
-import org.apache.kafka.common.utils.BufferSupplier;
-import org.apache.kafka.common.utils.Utils;
-import org.apache.kafka.raft.Batch;
-import org.apache.kafka.raft.OffsetAndEpoch;
-import org.apache.kafka.raft.RaftClientTestContext;
-import org.apache.kafka.raft.internals.StringSerde;
-import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -45,9 +46,9 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-final public class SnapshotWriterReaderTest {
+public final class SnapshotWriterReaderTest {
     private final int localId = 0;
-    private final Set<Integer> voters = Collections.singleton(localId);
+    private final Set<Integer> voters = Set.of(localId);
 
     @Test
     public void testSnapshotDelimiters() throws Exception {
@@ -108,7 +109,7 @@ final public class SnapshotWriterReaderTest {
             RawSnapshotReader snapshot = context.log.readSnapshot(id).get();
             int recordCount = validateDelimiters(snapshot, magicTimestamp);
             assertEquals((recordsPerBatch * batches) + delimiterCount, recordCount);
-            assertSnapshot(expected, reader);
+            assertDataSnapshot(expected, reader);
 
             assertEquals(magicTimestamp, Snapshots.lastContainedLogTimestamp(snapshot));
         }
@@ -133,9 +134,9 @@ final public class SnapshotWriterReaderTest {
 
         try (SnapshotWriter<String> snapshot = context.client.createSnapshot(id, 0).get()) {
             assertEquals(id, snapshot.snapshotId());
-            expected.forEach(batch -> {
-                assertDoesNotThrow(() -> snapshot.append(batch));
-            });
+            expected.forEach(batch ->
+                assertDoesNotThrow(() -> snapshot.append(batch))
+            );
         }
 
         assertEquals(Optional.empty(), context.log.readSnapshot(id));
@@ -160,9 +161,9 @@ final public class SnapshotWriterReaderTest {
 
         try (SnapshotWriter<String> snapshot = context.client.createSnapshot(id, 0).get()) {
             assertEquals(id, snapshot.snapshotId());
-            expected.forEach(batch -> {
-                assertDoesNotThrow(() -> snapshot.append(batch));
-            });
+            expected.forEach(batch ->
+                assertDoesNotThrow(() -> snapshot.append(batch))
+            );
 
             snapshot.freeze();
 
@@ -206,7 +207,7 @@ final public class SnapshotWriterReaderTest {
 
         int countRecords = 0;
 
-        Iterator<RecordBatch> recordBatches = Utils.covariantCast(snapshot.records().batchIterator());
+        var recordBatches = snapshot.records().batchIterator();
 
         assertTrue(recordBatches.hasNext());
         RecordBatch batch = recordBatches.next();
@@ -220,7 +221,7 @@ final public class SnapshotWriterReaderTest {
         countRecords += 1;
 
         SnapshotHeaderRecord headerRecord = ControlRecordUtils.deserializeSnapshotHeaderRecord(record);
-        assertEquals(headerRecord.version(), ControlRecordUtils.SNAPSHOT_HEADER_CURRENT_VERSION);
+        assertEquals(ControlRecordUtils.SNAPSHOT_HEADER_CURRENT_VERSION, headerRecord.version());
         assertEquals(headerRecord.lastContainedLogTimestamp(), lastContainedLogTime);
 
         assertFalse(records.hasNext());
@@ -240,19 +241,22 @@ final public class SnapshotWriterReaderTest {
         assertTrue(batch.isControlBatch());
 
         SnapshotFooterRecord footerRecord = ControlRecordUtils.deserializeSnapshotFooterRecord(record);
-        assertEquals(footerRecord.version(), ControlRecordUtils.SNAPSHOT_FOOTER_CURRENT_VERSION);
+        assertEquals(ControlRecordUtils.SNAPSHOT_FOOTER_CURRENT_VERSION, footerRecord.version());
 
         return countRecords;
     }
 
-    public static void assertSnapshot(List<List<String>> batches, RawSnapshotReader reader) {
-        assertSnapshot(
+    public static void assertDataSnapshot(List<List<String>> batches, RawSnapshotReader reader) {
+        assertDataSnapshot(
             batches,
             RecordsSnapshotReader.of(reader, new StringSerde(), BufferSupplier.create(), Integer.MAX_VALUE, true)
         );
     }
 
-    public static void assertSnapshot(List<List<String>> batches, SnapshotReader<String> reader) {
+    public static void assertDataSnapshot(
+        List<List<String>> batches,
+        SnapshotReader<String> reader
+    ) {
         List<String> expected = new ArrayList<>();
         batches.forEach(expected::addAll);
 
@@ -265,5 +269,20 @@ final public class SnapshotWriterReaderTest {
         }
 
         assertEquals(expected, actual);
+    }
+
+    public static void assertControlSnapshot(
+        List<List<ControlRecord>> expectedBatches,
+        SnapshotReader<?> reader
+    ) {
+        List<List<ControlRecord>> actualBatches = new ArrayList<>(expectedBatches.size());
+        while (reader.hasNext()) {
+            Batch<?> batch = reader.next();
+            if (!batch.controlRecords().isEmpty()) {
+                actualBatches.add(batch.controlRecords());
+            }
+        }
+
+        assertEquals(expectedBatches, actualBatches);
     }
 }

@@ -19,7 +19,7 @@ package org.apache.kafka.server.log.remote.storage;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.record.CompressionType;
+import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.record.MemoryRecordsBuilder;
@@ -27,6 +27,7 @@ import org.apache.kafka.common.record.Record;
 import org.apache.kafka.common.record.RecordBatch;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.storage.internals.log.LogFileUtils;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,35 +47,29 @@ import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 import static java.lang.String.format;
 import static java.nio.ByteBuffer.wrap;
-import static java.util.Arrays.asList;
 import static java.util.Objects.requireNonNull;
 import static org.apache.kafka.server.log.remote.storage.LocalTieredStorageSnapshot.takeSnapshot;
-import static org.apache.kafka.server.log.remote.storage.RemoteLogSegmentFileset.RemoteLogSegmentFileType.SEGMENT;
 import static org.apache.kafka.server.log.remote.storage.RemoteLogSegmentFileset.RemoteLogSegmentFileType.LEADER_EPOCH_CHECKPOINT;
-
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
+import static org.apache.kafka.server.log.remote.storage.RemoteLogSegmentFileset.RemoteLogSegmentFileType.SEGMENT;
 import static org.apache.kafka.server.log.remote.storage.RemoteStorageManager.IndexType.LEADER_EPOCH;
 import static org.apache.kafka.server.log.remote.storage.RemoteStorageManager.IndexType.OFFSET;
 import static org.apache.kafka.server.log.remote.storage.RemoteStorageManager.IndexType.PRODUCER_SNAPSHOT;
 import static org.apache.kafka.server.log.remote.storage.RemoteStorageManager.IndexType.TIMESTAMP;
 import static org.apache.kafka.server.log.remote.storage.RemoteStorageManager.IndexType.TRANSACTION;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public final class LocalTieredStorageTest {
 
@@ -104,7 +99,7 @@ public final class LocalTieredStorageTest {
 
     @BeforeEach
     public void before(TestInfo testInfo) {
-        init(Collections.emptyMap(), testInfo.getDisplayName());
+        init(Map.of(), testInfo.getDisplayName());
     }
 
     @AfterEach
@@ -250,7 +245,7 @@ public final class LocalTieredStorageTest {
 
     @Test
     public void segmentsAreNotDeletedIfDeleteApiIsDisabled(TestInfo testInfo) throws RemoteStorageException {
-        init(Collections.singletonMap(LocalTieredStorage.ENABLE_DELETE_API_CONFIG, "false"), testInfo.getDisplayName());
+        init(Map.of(LocalTieredStorage.ENABLE_DELETE_API_CONFIG, "false"), testInfo.getDisplayName());
 
         final RemoteLogSegmentId id = newRemoteLogSegmentId();
         final LogSegmentData segment = localLogSegments.nextSegment();
@@ -304,8 +299,8 @@ public final class LocalTieredStorageTest {
 
         final LocalTieredStorageSnapshot snapshot = takeSnapshot(tieredStorage);
 
-        assertEquals(asList(topicPartition), snapshot.getTopicPartitions());
-        assertEquals(asList(wrap(record1), wrap(record2)), extractRecordsValue(snapshot, id));
+        assertEquals(List.of(topicPartition), snapshot.getTopicPartitions());
+        assertEquals(List.of(wrap(record1), wrap(record2)), extractRecordsValue(snapshot, id));
     }
 
     @Test
@@ -324,14 +319,14 @@ public final class LocalTieredStorageTest {
         final LocalTieredStorageSnapshot snapshot = takeSnapshot(tieredStorage);
 
         final Map<RemoteLogSegmentId, List<ByteBuffer>> expected = new HashMap<>();
-        expected.put(idA, asList(wrap(record1a), wrap(record2a)));
-        expected.put(idB, asList(wrap(record1b), wrap(record2b)));
+        expected.put(idA, List.of(wrap(record1a), wrap(record2a)));
+        expected.put(idB, List.of(wrap(record1b), wrap(record2b)));
 
         final Map<RemoteLogSegmentId, List<ByteBuffer>> actual = new HashMap<>();
         actual.put(idA, extractRecordsValue(snapshot, idA));
         actual.put(idB, extractRecordsValue(snapshot, idB));
 
-        assertEquals(asList(topicPartition), snapshot.getTopicPartitions());
+        assertEquals(List.of(topicPartition), snapshot.getTopicPartitions());
         assertEquals(expected, actual);
     }
 
@@ -359,7 +354,7 @@ public final class LocalTieredStorageTest {
 
     private RemoteLogSegmentMetadata newRemoteLogSegmentMetadata(final RemoteLogSegmentId id) {
         return new RemoteLogSegmentMetadata(id, 0, 0, -1L, -1, 1000L,
-                1024, Collections.singletonMap(0, 0L));
+                1024, Map.of(0, 0L));
     }
 
     private RemoteLogSegmentId newRemoteLogSegmentId() {
@@ -404,7 +399,7 @@ public final class LocalTieredStorageTest {
             final String uuid = metadata.remoteLogSegmentId().id().toString();
             final String startOffset = LogFileUtils.filenamePrefixFromOffset(metadata.startOffset());
 
-            return Arrays.asList(
+            return List.of(
                     Paths.get(rootPath, topicPartitionSubpath, startOffset + "-" + uuid + LogFileUtils.LOG_FILE_SUFFIX),
                     Paths.get(rootPath, topicPartitionSubpath, startOffset + "-" + uuid + LogFileUtils.INDEX_FILE_SUFFIX),
                     Paths.get(rootPath, topicPartitionSubpath, startOffset + "-" + uuid + LogFileUtils.TIME_INDEX_FILE_SUFFIX),
@@ -464,8 +459,7 @@ public final class LocalTieredStorageTest {
          * @param expected The expected content.
          */
         public void verifyFetchedLogSegment(final RemoteLogSegmentId id, final int startPosition, final byte[] expected) {
-            try {
-                final InputStream in = remoteStorage.fetchLogSegment(newMetadata(id), startPosition);
+            try (final InputStream in = remoteStorage.fetchLogSegment(newMetadata(id), startPosition)) {
                 final ByteBuffer buffer = ByteBuffer.wrap(readFully(in));
                 Iterator<Record> records = MemoryRecords.readableRecords(buffer).records().iterator();
 
@@ -530,8 +524,7 @@ public final class LocalTieredStorageTest {
         private void verifyFileContents(final Function<RemoteLogSegmentMetadata, InputStream> actual,
                                         final RemoteLogSegmentId id,
                                         final byte[] expected) {
-            try {
-                final InputStream in = actual.apply(newMetadata(id));
+            try (final InputStream in = actual.apply(newMetadata(id))) {
                 assertArrayEquals(expected, readFully(in));
             } catch (RemoteStorageException | IOException e) {
                 throw new AssertionError(e);
@@ -540,7 +533,7 @@ public final class LocalTieredStorageTest {
 
         private RemoteLogSegmentMetadata newMetadata(final RemoteLogSegmentId id) {
             return new RemoteLogSegmentMetadata(id, 0, 0, -1L, -1, 1000,
-                    1024, Collections.singletonMap(0, 0L));
+                    1024, Map.of(0, 0L));
         }
 
         private String getStorageRootDirectory() {
@@ -623,7 +616,7 @@ public final class LocalTieredStorageTest {
                 final byte magic = RecordBatch.MAGIC_VALUE_V2;
 
                 MemoryRecordsBuilder builder = MemoryRecords.builder(
-                        buffer, magic, CompressionType.NONE, TimestampType.CREATE_TIME, baseOffset);
+                        buffer, magic, Compression.NONE, TimestampType.CREATE_TIME, baseOffset);
 
                 for (byte[] value : data) {
                     builder.append(System.currentTimeMillis(), null, value);
@@ -652,7 +645,7 @@ public final class LocalTieredStorageTest {
         }
 
         void deleteAll() throws IOException {
-            List<Path> paths = Files.list(segmentPath).collect(Collectors.toList());
+            List<Path> paths = Files.list(segmentPath).toList();
             for (final Path path : paths) {
                 Files.delete(path);
             }

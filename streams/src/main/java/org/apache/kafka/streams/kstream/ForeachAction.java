@@ -30,6 +30,7 @@ package org.apache.kafka.streams.kstream;
  *
  * @see KStream#foreach(ForeachAction)
  */
+@FunctionalInterface
 public interface ForeachAction<K, V> {
 
     /**
@@ -42,5 +43,3 @@ public interface ForeachAction<K, V> {
      */
     void apply(final K key, final V value);
 }
-
-

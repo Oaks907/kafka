@@ -16,26 +16,61 @@
  */
 package org.apache.kafka.connect.runtime;
 
-import static java.util.Arrays.asList;
-import static java.util.Collections.singleton;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThrows;
-import static org.junit.Assert.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyMap;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doNothing;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.consumer.MockConsumer;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.clients.consumer.OffsetCommitCallback;
+import org.apache.kafka.clients.consumer.internals.AutoOffsetResetStrategy;
+import org.apache.kafka.common.MetricName;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.WakeupException;
+import org.apache.kafka.common.header.Header;
+import org.apache.kafka.common.header.Headers;
+import org.apache.kafka.common.header.internals.RecordHeaders;
+import org.apache.kafka.common.internals.Plugin;
+import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.record.TimestampType;
+import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.connect.data.Schema;
+import org.apache.kafka.connect.data.SchemaAndValue;
+import org.apache.kafka.connect.errors.ConnectException;
+import org.apache.kafka.connect.errors.RetriableException;
+import org.apache.kafka.connect.runtime.ConnectMetrics.MetricGroup;
+import org.apache.kafka.connect.runtime.WorkerSinkTask.SinkTaskMetricsGroup;
+import org.apache.kafka.connect.runtime.errors.ErrorHandlingMetrics;
+import org.apache.kafka.connect.runtime.errors.ErrorReporter;
+import org.apache.kafka.connect.runtime.errors.ProcessingContext;
+import org.apache.kafka.connect.runtime.errors.RetryWithToleranceOperator;
+import org.apache.kafka.connect.runtime.errors.RetryWithToleranceOperatorTest;
+import org.apache.kafka.connect.runtime.isolation.PluginClassLoader;
+import org.apache.kafka.connect.runtime.isolation.TestPlugins;
+import org.apache.kafka.connect.runtime.standalone.StandaloneConfig;
+import org.apache.kafka.connect.sink.SinkConnector;
+import org.apache.kafka.connect.sink.SinkRecord;
+import org.apache.kafka.connect.sink.SinkTask;
+import org.apache.kafka.connect.storage.ClusterConfigState;
+import org.apache.kafka.connect.storage.Converter;
+import org.apache.kafka.connect.storage.HeaderConverter;
+import org.apache.kafka.connect.storage.StatusBackingStore;
+import org.apache.kafka.connect.storage.StringConverter;
+import org.apache.kafka.connect.util.ConnectorTaskId;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import org.mockito.stubbing.Answer;
+import org.mockito.stubbing.OngoingStubbing;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -55,61 +90,31 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.clients.consumer.MockConsumer;
-import org.apache.kafka.clients.consumer.OffsetAndMetadata;
-import org.apache.kafka.clients.consumer.OffsetCommitCallback;
-import org.apache.kafka.clients.consumer.OffsetResetStrategy;
-import org.apache.kafka.common.MetricName;
-import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.errors.WakeupException;
-import org.apache.kafka.common.header.Header;
-import org.apache.kafka.common.header.Headers;
-import org.apache.kafka.common.header.internals.RecordHeaders;
-import org.apache.kafka.common.record.RecordBatch;
-import org.apache.kafka.common.record.TimestampType;
-import org.apache.kafka.common.utils.MockTime;
-import org.apache.kafka.common.utils.Time;
-import org.apache.kafka.connect.data.Schema;
-import org.apache.kafka.connect.data.SchemaAndValue;
-import org.apache.kafka.connect.errors.ConnectException;
-import org.apache.kafka.connect.errors.RetriableException;
-import org.apache.kafka.connect.runtime.ConnectMetrics.MetricGroup;
-import org.apache.kafka.connect.runtime.WorkerSinkTask.SinkTaskMetricsGroup;
-import org.apache.kafka.connect.runtime.errors.ErrorHandlingMetrics;
-import org.apache.kafka.connect.runtime.errors.ErrorReporter;
-import org.apache.kafka.connect.runtime.errors.ProcessingContext;
-import org.apache.kafka.connect.runtime.errors.RetryWithToleranceOperator;
-import org.apache.kafka.connect.runtime.errors.RetryWithToleranceOperatorTest;
-import org.apache.kafka.connect.runtime.isolation.PluginClassLoader;
-import org.apache.kafka.connect.runtime.standalone.StandaloneConfig;
-import org.apache.kafka.connect.sink.SinkConnector;
-import org.apache.kafka.connect.sink.SinkRecord;
-import org.apache.kafka.connect.sink.SinkTask;
-import org.apache.kafka.connect.storage.ClusterConfigState;
-import org.apache.kafka.connect.storage.Converter;
-import org.apache.kafka.connect.storage.HeaderConverter;
-import org.apache.kafka.connect.storage.StatusBackingStore;
-import org.apache.kafka.connect.storage.StringConverter;
-import org.apache.kafka.connect.util.ConnectorTaskId;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnit;
-import org.mockito.junit.MockitoJUnitRunner;
-import org.mockito.junit.MockitoRule;
-import org.mockito.quality.Strictness;
-import org.mockito.stubbing.Answer;
-import org.mockito.stubbing.OngoingStubbing;
 
-@RunWith(MockitoJUnitRunner.StrictStubs.class)
+import static java.util.Arrays.asList;
+import static java.util.Collections.singleton;
+import static org.apache.kafka.connect.runtime.WorkerTestUtils.getTransformationChain;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class WorkerSinkTaskTest {
     // These are fixed to keep this code simpler. In this example we assume byte[] raw values
     // with mix of integer/string in Connect
@@ -141,14 +146,14 @@ public class WorkerSinkTaskTest {
 
     private static final TaskConfig TASK_CONFIG = new TaskConfig(TASK_PROPS);
 
-    private ConnectorTaskId taskId = new ConnectorTaskId("job", 0);
-    private ConnectorTaskId taskId1 = new ConnectorTaskId("job", 1);
-    private TargetState initialState = TargetState.STARTED;
+    private final ConnectorTaskId taskId = new ConnectorTaskId("job", 0);
+    private final ConnectorTaskId taskId1 = new ConnectorTaskId("job", 1);
+    private final TargetState initialState = TargetState.STARTED;
     private MockTime time;
     private WorkerSinkTask workerTask;
     @Mock
     private SinkTask sinkTask;
-    private ArgumentCaptor<WorkerSinkTaskContext> sinkTaskContext = ArgumentCaptor.forClass(WorkerSinkTaskContext.class);
+    private final ArgumentCaptor<WorkerSinkTaskContext> sinkTaskContext = ArgumentCaptor.forClass(WorkerSinkTaskContext.class);
     private WorkerConfig workerConfig;
     private MockConnectMetrics metrics;
     @Mock
@@ -169,14 +174,12 @@ public class WorkerSinkTaskTest {
     private KafkaConsumer<byte[], byte[]> consumer;
     @Mock
     private ErrorHandlingMetrics errorHandlingMetrics;
-    private ArgumentCaptor<ConsumerRebalanceListener> rebalanceListener = ArgumentCaptor.forClass(ConsumerRebalanceListener.class);
-    @Rule
-    public final MockitoRule rule = MockitoJUnit.rule().strictness(Strictness.STRICT_STUBS);
+    private final ArgumentCaptor<ConsumerRebalanceListener> rebalanceListener = ArgumentCaptor.forClass(ConsumerRebalanceListener.class);
 
     private long recordsReturnedTp1;
     private long recordsReturnedTp3;
 
-    @Before
+    @BeforeEach
     public void setUp() {
         time = new MockTime();
         Map<String, String> workerProps = new HashMap<>();
@@ -193,21 +196,43 @@ public class WorkerSinkTaskTest {
         createTask(initialState, keyConverter, valueConverter, headerConverter);
     }
 
+    private void createTask(TargetState initialState, TransformationChain transformationChain, RetryWithToleranceOperator toleranceOperator) {
+        createTask(initialState, keyConverter, valueConverter, headerConverter, toleranceOperator, Collections::emptyList, transformationChain);
+    }
+
     private void createTask(TargetState initialState, Converter keyConverter, Converter valueConverter, HeaderConverter headerConverter) {
-        createTask(initialState, keyConverter, valueConverter, headerConverter, RetryWithToleranceOperatorTest.noopOperator(), Collections::emptyList);
+        createTask(initialState, keyConverter, valueConverter, headerConverter, RetryWithToleranceOperatorTest.noneOperator(), Collections::emptyList, transformationChain);
     }
 
     private void createTask(TargetState initialState, Converter keyConverter, Converter valueConverter, HeaderConverter headerConverter,
                             RetryWithToleranceOperator<ConsumerRecord<byte[], byte[]>> retryWithToleranceOperator,
-                            Supplier<List<ErrorReporter<ConsumerRecord<byte[], byte[]>>>> errorReportersSupplier) {
-        workerTask = new WorkerSinkTask(
-                taskId, sinkTask, statusListener, initialState, workerConfig, ClusterConfigState.EMPTY, metrics,
+                            Supplier<List<ErrorReporter<ConsumerRecord<byte[], byte[]>>>> errorReportersSupplier,
+                            TransformationChain<ConsumerRecord<byte[], byte[]>, SinkRecord> transformationChain) {
+        createTask(taskId, sinkTask, statusListener, initialState, workerConfig, metrics,
                 keyConverter, valueConverter, errorHandlingMetrics, headerConverter,
                 transformationChain, consumer, pluginLoader, time,
-                retryWithToleranceOperator, null, statusBackingStore, errorReportersSupplier);
+                retryWithToleranceOperator, statusBackingStore, errorReportersSupplier);
     }
 
-    @After
+    private void createTask(ConnectorTaskId taskId, SinkTask task, TaskStatus.Listener statusListener, TargetState initialState,
+                            WorkerConfig workerConfig, ConnectMetrics connectMetrics, Converter keyConverter, Converter valueConverter,
+                            ErrorHandlingMetrics errorMetrics, HeaderConverter headerConverter,
+                            TransformationChain<ConsumerRecord<byte[], byte[]>, SinkRecord> transformationChain,
+                            Consumer<byte[], byte[]> consumer, ClassLoader loader, Time time,
+                            RetryWithToleranceOperator<ConsumerRecord<byte[], byte[]>> retryWithToleranceOperator,
+                            StatusBackingStore statusBackingStore,
+                            Supplier<List<ErrorReporter<ConsumerRecord<byte[], byte[]>>>> errorReportersSupplier) {
+        Plugin<Converter> keyConverterPlugin = connectMetrics.wrap(keyConverter, taskId, true);
+        Plugin<Converter> valueConverterPlugin = connectMetrics.wrap(valueConverter, taskId, false);
+        Plugin<HeaderConverter> headerConverterPlugin = connectMetrics.wrap(headerConverter, taskId);
+        workerTask = new WorkerSinkTask(
+                taskId, task, statusListener, initialState, workerConfig, ClusterConfigState.EMPTY, connectMetrics,
+                keyConverterPlugin, valueConverterPlugin, errorMetrics, headerConverterPlugin,
+                transformationChain, consumer, loader, time,
+                retryWithToleranceOperator, null, statusBackingStore, errorReportersSupplier, TestPlugins.noOpLoaderSwap());
+    }
+
+    @AfterEach
     public void tearDown() {
         if (metrics != null) metrics.stop();
     }
@@ -489,7 +514,8 @@ public class WorkerSinkTaskTest {
 
                     rebalanceListener.getValue().onPartitionsRevoked(INITIAL_ASSIGNMENT);
                     rebalanceListener.getValue().onPartitionsAssigned(Collections.emptyList());
-                    return new ConsumerRecords<>(Collections.singletonMap(TOPIC_PARTITION3, Collections.singletonList(newRecord)));
+                    return new ConsumerRecords<>(Map.of(TOPIC_PARTITION3, List.of(newRecord)),
+                        Map.of(TOPIC_PARTITION3, new OffsetAndMetadata(FIRST_OFFSET + 1, Optional.empty(), "")));
                 });
         expectConversionAndTransformation(null, new RecordHeaders());
 
@@ -684,9 +710,9 @@ public class WorkerSinkTaskTest {
 
         when(consumer.assignment())
                 .thenReturn(INITIAL_ASSIGNMENT, INITIAL_ASSIGNMENT)
-                .thenReturn(new HashSet<>(Arrays.asList(TOPIC_PARTITION2)))
-                .thenReturn(new HashSet<>(Arrays.asList(TOPIC_PARTITION2)))
-                .thenReturn(new HashSet<>(Arrays.asList(TOPIC_PARTITION2)))
+                .thenReturn(new HashSet<>(Collections.singletonList(TOPIC_PARTITION2)))
+                .thenReturn(new HashSet<>(Collections.singletonList(TOPIC_PARTITION2)))
+                .thenReturn(new HashSet<>(Collections.singletonList(TOPIC_PARTITION2)))
                 .thenReturn(new HashSet<>(Arrays.asList(TOPIC_PARTITION2, TOPIC_PARTITION3)))
                 .thenReturn(new HashSet<>(Arrays.asList(TOPIC_PARTITION2, TOPIC_PARTITION3)))
                 .thenReturn(new HashSet<>(Arrays.asList(TOPIC_PARTITION2, TOPIC_PARTITION3)));
@@ -832,7 +858,7 @@ public class WorkerSinkTaskTest {
                 .thenAnswer(invocation -> {
                     // stop the task during its second iteration
                     workerTask.stop();
-                    return new ConsumerRecords<>(Collections.emptyMap());
+                    return new ConsumerRecords<>(Map.of(), Map.of());
                 });
         expectConversionAndTransformation(null, new RecordHeaders());
 
@@ -852,6 +878,103 @@ public class WorkerSinkTaskTest {
         assertEquals(0, workerTask.commitFailures());
         verify(consumer).wakeup();
         verify(sinkTask).close(any(Collection.class));
+    }
+
+    @Test
+    public void testRaisesFailedRetriableExceptionFromConvert() {
+        createTask(initialState);
+
+        workerTask.initialize(TASK_CONFIG);
+        workerTask.initializeAndStart();
+        verifyInitializeTask();
+
+        expectPollInitialAssignment()
+                .thenAnswer(expectConsumerPoll(1))
+                .thenAnswer(invocation -> {
+                    // stop the task during its second iteration
+                    workerTask.stop();
+                    return new ConsumerRecords<>(Map.of(), Map.of());
+                });
+        throwExceptionOnConversion(null, new RecordHeaders());
+
+        workerTask.iteration();
+
+        assertThrows(ConnectException.class, workerTask::execute);
+    }
+
+    @Test
+    public void testSkipsFailedRetriableExceptionFromConvert() {
+        createTask(initialState, keyConverter, valueConverter, headerConverter,
+                RetryWithToleranceOperatorTest.allOperator(), Collections::emptyList, transformationChain);
+
+        workerTask.initialize(TASK_CONFIG);
+        workerTask.initializeAndStart();
+        verifyInitializeTask();
+
+        expectPollInitialAssignment()
+                .thenAnswer(expectConsumerPoll(1))
+                .thenAnswer(invocation -> {
+                    // stop the task during its second iteration
+                    workerTask.stop();
+                    return new ConsumerRecords<>(Map.of(), Map.of());
+                });
+        throwExceptionOnConversion(null, new RecordHeaders());
+
+        workerTask.iteration();
+        workerTask.execute();
+
+        verify(sinkTask, times(3)).put(Collections.emptyList());
+    }
+
+    @Test
+    public void testRaisesFailedRetriableExceptionFromTransform() {
+        RetryWithToleranceOperator<RetriableException> retryWithToleranceOperator = RetryWithToleranceOperatorTest.noneOperator();
+        TransformationChain<RetriableException, SinkRecord> transformationChainRetriableException = getTransformationChain(
+                retryWithToleranceOperator, List.of(new RetriableException("Test")));
+        createTask(initialState, transformationChainRetriableException, retryWithToleranceOperator);
+
+        workerTask.initialize(TASK_CONFIG);
+        workerTask.initializeAndStart();
+        verifyInitializeTask();
+
+        expectPollInitialAssignment()
+                .thenAnswer(expectConsumerPoll(1))
+                .thenAnswer(invocation -> {
+                    // stop the task during its second iteration
+                    workerTask.stop();
+                    return new ConsumerRecords<>(Map.of(), Map.of());
+                });
+        expectConversion(null, new RecordHeaders());
+
+        workerTask.iteration();
+
+        assertThrows(ConnectException.class, workerTask::execute);
+    }
+
+    @Test
+    public void testSkipsFailedRetriableExceptionFromTransform() {
+        RetryWithToleranceOperator<RetriableException> retryWithToleranceOperator = RetryWithToleranceOperatorTest.allOperator();
+        TransformationChain<RetriableException, SinkRecord> transformationChainRetriableException = getTransformationChain(
+                retryWithToleranceOperator, List.of(new RetriableException("Test")));
+        createTask(initialState, transformationChainRetriableException, retryWithToleranceOperator);
+
+        workerTask.initialize(TASK_CONFIG);
+        workerTask.initializeAndStart();
+        verifyInitializeTask();
+
+        expectPollInitialAssignment()
+                .thenAnswer(expectConsumerPoll(1))
+                .thenAnswer(invocation -> {
+                    // stop the task during its second iteration
+                    workerTask.stop();
+                    return new ConsumerRecords<>(Map.of(), Map.of());
+                });
+        expectConversion(null, new RecordHeaders());
+
+        workerTask.iteration();
+        workerTask.execute();
+
+        verify(sinkTask, times(3)).put(Collections.emptyList());
     }
 
     @Test
@@ -920,10 +1043,10 @@ public class WorkerSinkTaskTest {
         // is the normal commit time less the two sleeps since it started each
         // of those sleeps were 10 seconds.
         // KAFKA-8229
-        assertEquals("Should have only advanced by 40 seconds",
-                previousCommitValue  +
+        assertEquals(previousCommitValue +
                         (WorkerConfig.OFFSET_COMMIT_INTERVAL_MS_DEFAULT - 10000L * 2),
-                workerTask.getNextCommit());
+                workerTask.getNextCommit(),
+                "Should have only advanced by 40 seconds");
 
         assertSinkMetricValue("partition-count", 2);
         assertSinkMetricValue("sink-record-read-total", 1.0);
@@ -1110,7 +1233,7 @@ public class WorkerSinkTaskTest {
         workerTask.iteration(); // iter 3 -- commit in progress
 
         // Make sure the "committing" flag didn't immediately get flipped back to false due to an incorrect timeout
-        assertTrue("Expected worker to be in the process of committing offsets", workerTask.isCommitting());
+        assertTrue(workerTask.isCommitting(), "Expected worker to be in the process of committing offsets");
 
         // Delay the result of trying to commit offsets to Kafka via the consumer.commitAsync method.
         ArgumentCaptor<OffsetCommitCallback> offsetCommitCallbackArgumentCaptor =
@@ -1196,8 +1319,8 @@ public class WorkerSinkTaskTest {
         workerTask.initializeAndStart();
 
         RuntimeException thrownException = assertThrows(ConnectException.class, () -> workerTask.execute());
-        assertEquals("Exception from put should be the cause", putException, thrownException.getCause());
-        assertTrue("Exception from close should be suppressed", thrownException.getSuppressed().length > 0);
+        assertEquals(putException, thrownException.getCause(), "Exception from put should be the cause");
+        assertTrue(thrownException.getSuppressed().length > 0, "Exception from close should be suppressed");
         assertEquals(closeException, thrownException.getSuppressed()[0]);
     }
 
@@ -1327,7 +1450,9 @@ public class WorkerSinkTaskTest {
                     0, 0, RAW_KEY, RAW_VALUE, new RecordHeaders(), Optional.empty()));
             recordsReturnedTp1 += 1;
             recordsReturnedTp3 += 1;
-            return new ConsumerRecords<>(Collections.singletonMap(new TopicPartition(TOPIC, PARTITION), records));
+            final TopicPartition tp = new TopicPartition(TOPIC, PARTITION);
+            final OffsetAndMetadata nextOffsetAndMetadata = new OffsetAndMetadata(FIRST_OFFSET + recordsReturnedTp1 + 2, Optional.empty(), "");
+            return new ConsumerRecords<>(Map.of(tp, records), Map.of(tp, nextOffsetAndMetadata));
         };
 
         // onPartitionsRevoked
@@ -1697,7 +1822,9 @@ public class WorkerSinkTaskTest {
                             new ConsumerRecord<>(TOPIC, PARTITION, FIRST_OFFSET + recordsReturnedTp1 + 2, RecordBatch.NO_TIMESTAMP, TimestampType.NO_TIMESTAMP_TYPE,
                                     0, 0, keyB.getBytes(), valueB.getBytes(encodingB), headersB, Optional.empty())
                     );
-                    return new ConsumerRecords<>(Collections.singletonMap(new TopicPartition(TOPIC, PARTITION), records));
+                    final OffsetAndMetadata nextOffsetAndMetadata = new OffsetAndMetadata(FIRST_OFFSET + recordsReturnedTp1 + 3, Optional.empty(), "");
+                    final TopicPartition tp = new TopicPartition(TOPIC, PARTITION);
+                    return new ConsumerRecords<>(Map.of(tp, records), Map.of(tp, nextOffsetAndMetadata));
                 });
 
         expectTransformation(null);
@@ -1748,15 +1875,14 @@ public class WorkerSinkTaskTest {
 
     @Test
     public void testPartitionCountInCaseOfPartitionRevocation() {
-        MockConsumer<byte[], byte[]> mockConsumer = new MockConsumer<>(OffsetResetStrategy.EARLIEST);
+        MockConsumer<byte[], byte[]> mockConsumer = new MockConsumer<>(AutoOffsetResetStrategy.EARLIEST.name());
         // Setting up Worker Sink Task to check metrics
-        workerTask = new WorkerSinkTask(
-                taskId, sinkTask, statusListener, TargetState.PAUSED, workerConfig, ClusterConfigState.EMPTY, metrics,
+        createTask(taskId, sinkTask, statusListener, TargetState.PAUSED, workerConfig, metrics,
                 keyConverter, valueConverter, errorHandlingMetrics, headerConverter,
                 transformationChain, mockConsumer, pluginLoader, time,
-                RetryWithToleranceOperatorTest.noopOperator(), null, statusBackingStore, Collections::emptyList);
+                RetryWithToleranceOperatorTest.noneOperator(), statusBackingStore, Collections::emptyList);
         mockConsumer.updateBeginningOffsets(
-                new HashMap<TopicPartition, Long>() {{
+                new HashMap<>() {{
                     put(TOPIC_PARTITION, 0L);
                     put(TOPIC_PARTITION2, 0L);
                 }}
@@ -1788,7 +1914,7 @@ public class WorkerSinkTaskTest {
     }
 
     private void verifyInitializeTask() {
-        verify(consumer).subscribe(eq(asList(TOPIC)), rebalanceListener.capture());
+        verify(consumer).subscribe(eq(Collections.singletonList(TOPIC)), rebalanceListener.capture());
         verify(sinkTask).initialize(sinkTaskContext.capture());
         verify(sinkTask).start(TASK_PROPS);
     }
@@ -1822,15 +1948,18 @@ public class WorkerSinkTaskTest {
     private Answer<ConsumerRecords<byte[], byte[]>> expectConsumerPoll(final int numMessages, final long timestamp, final TimestampType timestampType, Headers headers) {
         return invocation -> {
             List<ConsumerRecord<byte[], byte[]>> records = new ArrayList<>();
-            for (int i = 0; i < numMessages; i++)
-                records.add(new ConsumerRecord<>(TOPIC, PARTITION, FIRST_OFFSET + recordsReturnedTp1 + i, timestamp, timestampType,
-                        0, 0, RAW_KEY, RAW_VALUE, headers, Optional.empty()));
+            long offset = 0;
+            for (int i = 0; i < numMessages; i++) {
+                offset = FIRST_OFFSET + recordsReturnedTp1 + i;
+                records.add(new ConsumerRecord<>(TOPIC, PARTITION, offset, timestamp, timestampType,
+                    0, 0, RAW_KEY, RAW_VALUE, headers, Optional.empty()));
+            }
             recordsReturnedTp1 += numMessages;
-            return new ConsumerRecords<>(
-                    numMessages > 0 ?
-                            Collections.singletonMap(new TopicPartition(TOPIC, PARTITION), records)
-                            : Collections.emptyMap()
-            );
+            final TopicPartition tp = new TopicPartition(TOPIC, PARTITION);
+            if (numMessages > 0) {
+                return new ConsumerRecords<>(Map.of(tp, records), Map.of(tp, new OffsetAndMetadata(offset + 1, Optional.empty(), "")));
+            }
+            return new ConsumerRecords<>(Map.of(), Map.of());
         };
     }
 
@@ -1843,6 +1972,19 @@ public class WorkerSinkTaskTest {
         }
 
         expectTransformation(topicPrefix);
+    }
+
+    private void expectConversion(final String topicPrefix, final Headers headers) {
+        when(keyConverter.toConnectData(TOPIC, headers, RAW_KEY)).thenReturn(new SchemaAndValue(KEY_SCHEMA, KEY));
+        when(valueConverter.toConnectData(TOPIC, headers, RAW_VALUE)).thenReturn(new SchemaAndValue(VALUE_SCHEMA, VALUE));
+
+        for (Header header : headers) {
+            when(headerConverter.toConnectHeader(TOPIC, header.key(), header.value())).thenReturn(new SchemaAndValue(VALUE_SCHEMA, new String(header.value())));
+        }
+    }
+
+    private void throwExceptionOnConversion(final String topicPrefix, final Headers headers) {
+        when(keyConverter.toConnectData(TOPIC, headers, RAW_KEY)).thenThrow(new RetriableException("Failed to convert"));
     }
 
     @SuppressWarnings("unchecked")

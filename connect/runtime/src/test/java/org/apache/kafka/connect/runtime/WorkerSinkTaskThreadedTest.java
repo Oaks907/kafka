@@ -24,34 +24,39 @@ import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.OffsetCommitCallback;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.header.internals.RecordHeaders;
+import org.apache.kafka.common.internals.Plugin;
 import org.apache.kafka.common.record.TimestampType;
+import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaAndValue;
 import org.apache.kafka.connect.errors.ConnectException;
-import org.apache.kafka.connect.runtime.errors.ProcessingContext;
-import org.apache.kafka.connect.storage.ClusterConfigState;
-import org.apache.kafka.connect.runtime.errors.RetryWithToleranceOperatorTest;
 import org.apache.kafka.connect.runtime.errors.ErrorHandlingMetrics;
+import org.apache.kafka.connect.runtime.errors.ProcessingContext;
+import org.apache.kafka.connect.runtime.errors.RetryWithToleranceOperatorTest;
 import org.apache.kafka.connect.runtime.isolation.PluginClassLoader;
+import org.apache.kafka.connect.runtime.isolation.TestPlugins;
 import org.apache.kafka.connect.runtime.standalone.StandaloneConfig;
 import org.apache.kafka.connect.sink.SinkConnector;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTask;
+import org.apache.kafka.connect.storage.ClusterConfigState;
 import org.apache.kafka.connect.storage.Converter;
 import org.apache.kafka.connect.storage.HeaderConverter;
 import org.apache.kafka.connect.storage.StatusBackingStore;
 import org.apache.kafka.connect.util.ConnectorTaskId;
-import org.apache.kafka.common.utils.MockTime;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.AdditionalAnswers;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.invocation.InvocationOnMock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.mockito.stubbing.Answer;
 
 import java.io.IOException;
@@ -68,10 +73,10 @@ import java.util.Set;
 import java.util.function.Function;
 
 import static java.util.Collections.singletonList;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -84,7 +89,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @SuppressWarnings("unchecked")
-@RunWith(MockitoJUnitRunner.StrictStubs.class)
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class WorkerSinkTaskThreadedTest {
 
     // These are fixed to keep this code simpler. In this example we assume byte[] raw values
@@ -161,7 +167,7 @@ public class WorkerSinkTaskThreadedTest {
         return offsetsToCommit;
     };
 
-    @Before
+    @BeforeEach
     public void setup() {
         time = new MockTime();
         metrics = new MockConnectMetrics();
@@ -170,15 +176,18 @@ public class WorkerSinkTaskThreadedTest {
         workerProps.put("value.converter", "org.apache.kafka.connect.json.JsonConverter");
         workerProps.put("offset.storage.file.filename", "/tmp/connect.offsets");
         WorkerConfig workerConfig = new StandaloneConfig(workerProps);
+        Plugin<Converter> keyConverterPlugin = metrics.wrap(keyConverter, taskId,  true);
+        Plugin<Converter> valueConverterPlugin = metrics.wrap(valueConverter, taskId,  false);
+        Plugin<HeaderConverter> headerConverterPlugin = metrics.wrap(headerConverter, taskId);
         workerTask = new WorkerSinkTask(
-                taskId, sinkTask, statusListener, initialState, workerConfig, ClusterConfigState.EMPTY, metrics, keyConverter,
-                valueConverter, errorHandlingMetrics, headerConverter, transformationChain,
-                consumer, pluginLoader, time, RetryWithToleranceOperatorTest.noopOperator(), null, statusBackingStore,
-                Collections::emptyList);
+                taskId, sinkTask, statusListener, initialState, workerConfig, ClusterConfigState.EMPTY, metrics, keyConverterPlugin,
+                valueConverterPlugin, errorHandlingMetrics, headerConverterPlugin, transformationChain,
+                consumer, pluginLoader, time, RetryWithToleranceOperatorTest.noneOperator(), null, statusBackingStore,
+                Collections::emptyList, TestPlugins.noOpLoaderSwap());
         recordsReturned = 0;
     }
 
-    @After
+    @AfterEach
     public void tearDown() {
         if (metrics != null) metrics.stop();
     }
@@ -241,8 +250,10 @@ public class WorkerSinkTaskThreadedTest {
         expectTaskGetTopic();
         expectInitialAssignment();
         expectPolls(WorkerConfig.OFFSET_COMMIT_INTERVAL_MS_DEFAULT);
-        expectOffsetCommit(new ExpectOffsetCommitCommand(
-                expectedMessages, null, null, 0, true));
+        ExpectOffsetCommitCommand command = new ExpectOffsetCommitCommand(
+                expectedMessages, null, null, 0, true);
+        expectPreCommit(command);
+        expectOffsetCommit(command);
 
         workerTask.initialize(TASK_CONFIG);
         workerTask.initializeAndStart();
@@ -276,7 +287,7 @@ public class WorkerSinkTaskThreadedTest {
         expectTaskGetTopic();
         expectInitialAssignment();
         expectPolls(WorkerConfig.OFFSET_COMMIT_INTERVAL_MS_DEFAULT);
-        expectOffsetCommit(new ExpectOffsetCommitCommand(
+        expectPreCommit(new ExpectOffsetCommitCommand(
                 1L, new RuntimeException(), null, 0, true));
 
         workerTask.initialize(TASK_CONFIG);
@@ -313,10 +324,12 @@ public class WorkerSinkTaskThreadedTest {
         expectTaskGetTopic();
         expectInitialAssignment();
         expectPolls(WorkerConfig.OFFSET_COMMIT_INTERVAL_MS_DEFAULT);
-        expectOffsetCommit(
-                new ExpectOffsetCommitCommand(1L, null, null, 0, true),
-                new ExpectOffsetCommitCommand(2L, new RuntimeException(), null, 0, true)
-        );
+        ExpectOffsetCommitCommand[] commands = new ExpectOffsetCommitCommand[]{
+            new ExpectOffsetCommitCommand(1L, null, null, 0, true),
+            new ExpectOffsetCommitCommand(2L, new RuntimeException(), null, 0, true)
+        };
+        expectPreCommit(commands);
+        expectOffsetCommit(commands);
 
         workerTask.initialize(TASK_CONFIG);
         workerTask.initializeAndStart();
@@ -351,8 +364,10 @@ public class WorkerSinkTaskThreadedTest {
         expectTaskGetTopic();
         expectInitialAssignment();
         expectPolls(WorkerConfig.OFFSET_COMMIT_INTERVAL_MS_DEFAULT);
-        expectOffsetCommit(new ExpectOffsetCommitCommand(
-                1L, null, new Exception(), 0, true));
+        ExpectOffsetCommitCommand command = new ExpectOffsetCommitCommand(
+                1L, null, new Exception(), 0, true);
+        expectPreCommit(command);
+        expectOffsetCommit(command);
 
         workerTask.initialize(TASK_CONFIG);
         workerTask.initializeAndStart();
@@ -383,8 +398,10 @@ public class WorkerSinkTaskThreadedTest {
         expectInitialAssignment();
         // Cut down amount of time to pass in each poll so we trigger exactly 1 offset commit
         expectPolls(WorkerConfig.OFFSET_COMMIT_INTERVAL_MS_DEFAULT / 2);
-        expectOffsetCommit(new ExpectOffsetCommitCommand(
-                2L, null, null, WorkerConfig.OFFSET_COMMIT_TIMEOUT_MS_DEFAULT, false));
+        ExpectOffsetCommitCommand command = new ExpectOffsetCommitCommand(
+                2L, null, null, WorkerConfig.OFFSET_COMMIT_TIMEOUT_MS_DEFAULT, false);
+        expectPreCommit(command);
+        expectOffsetCommit(command);
 
         workerTask.initialize(TASK_CONFIG);
         workerTask.initializeAndStart();
@@ -586,7 +603,8 @@ public class WorkerSinkTaskThreadedTest {
 
             TopicPartition topicPartition = new TopicPartition(TOPIC, PARTITION);
             ConsumerRecord<byte[], byte[]> consumerRecord = new ConsumerRecord<>(TOPIC, PARTITION, FIRST_OFFSET + recordsReturned, TIMESTAMP, TIMESTAMP_TYPE, 0, 0, RAW_KEY, RAW_VALUE, emptyHeaders(), Optional.empty());
-            ConsumerRecords<byte[], byte[]> records = new ConsumerRecords<>(Collections.singletonMap(topicPartition, singletonList(consumerRecord)));
+            ConsumerRecords<byte[], byte[]> records = new ConsumerRecords<>(Map.of(topicPartition, List.of(consumerRecord)),
+                Map.of(topicPartition, new OffsetAndMetadata(FIRST_OFFSET + recordsReturned + 1, Optional.empty(), "")));
             recordsReturned++;
             return records;
         });
@@ -617,7 +635,8 @@ public class WorkerSinkTaskThreadedTest {
                     TOPIC, PARTITION, FIRST_OFFSET + recordsReturned, TIMESTAMP, TIMESTAMP_TYPE,
                     0, 0, RAW_KEY, RAW_VALUE, emptyHeaders(), Optional.empty());
             ConsumerRecords<byte[], byte[]> records =
-                    new ConsumerRecords<>(Collections.singletonMap(topicPartition, singletonList(consumerRecord)));
+                    new ConsumerRecords<>(Map.of(topicPartition, List.of(consumerRecord)),
+                        Map.of(topicPartition, new OffsetAndMetadata(FIRST_OFFSET + recordsReturned + 1, Optional.empty(), "")));
             recordsReturned++;
             return records;
         });
@@ -626,15 +645,17 @@ public class WorkerSinkTaskThreadedTest {
         when(valueConverter.toConnectData(TOPIC, emptyHeaders(), RAW_VALUE)).thenReturn(new SchemaAndValue(VALUE_SCHEMA, VALUE));
     }
 
-    private void expectOffsetCommit(ExpectOffsetCommitCommand... commands) {
-        doAnswer(new Answer<Object>() {
+    private void expectPreCommit(ExpectOffsetCommitCommand... commands) {
+        doAnswer(new Answer<>() {
             int index = 0;
 
             @Override
             public Object answer(InvocationOnMock invocation) {
                 ExpectOffsetCommitCommand commitCommand = commands[index++];
-                // All assigned partitions will have offsets committed, but we've only processed messages/updated offsets for one
-                final Map<TopicPartition, OffsetAndMetadata> offsetsToCommit = offsetsToCommitFn.apply(commitCommand.expectedMessages);
+                // All assigned partitions will have offsets committed, but we've only processed messages/updated 
+                // offsets for one
+                final Map<TopicPartition, OffsetAndMetadata> offsetsToCommit =
+                        offsetsToCommitFn.apply(commitCommand.expectedMessages);
 
                 if (commitCommand.error != null) {
                     throw commitCommand.error;
@@ -643,8 +664,10 @@ public class WorkerSinkTaskThreadedTest {
                 }
             }
         }).when(sinkTask).preCommit(anyMap());
-
-        doAnswer(new Answer<Object>() {
+    }
+    
+    private void expectOffsetCommit(ExpectOffsetCommitCommand... commands) {
+        doAnswer(new Answer<>() {
             int index = 0;
 
             @Override
@@ -697,10 +720,9 @@ public class WorkerSinkTaskThreadedTest {
         return new RecordHeaders();
     }
 
-    private static abstract class TestSinkTask extends SinkTask {
+    private abstract static class TestSinkTask extends SinkTask {
     }
 
-    @SuppressWarnings("NewClassNamingConvention")
     private static class ExpectOffsetCommitCommand {
         final long expectedMessages;
         final RuntimeException error;

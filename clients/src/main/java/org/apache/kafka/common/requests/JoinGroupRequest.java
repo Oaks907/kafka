@@ -22,10 +22,9 @@ import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.message.JoinGroupRequestData;
 import org.apache.kafka.common.message.JoinGroupResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
-import org.apache.kafka.common.protocol.ByteBufferAccessor;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.protocol.Readable;
 
-import java.nio.ByteBuffer;
 import java.util.Collections;
 
 public class JoinGroupRequest extends AbstractRequest {
@@ -86,7 +85,7 @@ public class JoinGroupRequest extends AbstractRequest {
 
     /**
      * Since JoinGroupRequest version 4, a client that sends a join group request with
-     * {@link UNKNOWN_MEMBER_ID} needs to rejoin with a new member id generated
+     * {@link #UNKNOWN_MEMBER_ID} needs to rejoin with a new member id generated
      * by the server. Once the second join group request is complete, the client is
      * added as a new member of the group.
      *
@@ -99,6 +98,30 @@ public class JoinGroupRequest extends AbstractRequest {
      */
     public static boolean requiresKnownMemberId(short apiVersion) {
         return apiVersion >= 4;
+    }
+
+
+    /**
+     * Since JoinGroupRequest version 4, a client that sends a join group request with
+     * {@link #UNKNOWN_MEMBER_ID} needs to rejoin with a new member id generated
+     * by the server. Once the second join group request is complete, the client is
+     * added as a new member of the group.
+     *
+     * Prior to version 4, a client is immediately added as a new member if it sends a
+     * join group request with UNKNOWN_MEMBER_ID.
+     *
+     * @param request    The request.
+     * @param apiVersion The JoinGroupRequest api version.
+     *
+     * @return whether a known member id is required or not.
+     */
+    public static boolean requiresKnownMemberId(
+        JoinGroupRequestData request,
+        short apiVersion
+    ) {
+        return request.groupInstanceId() == null
+            && request.memberId().equals(UNKNOWN_MEMBER_ID)
+            && requiresKnownMemberId(apiVersion);
     }
 
     /**
@@ -184,7 +207,7 @@ public class JoinGroupRequest extends AbstractRequest {
         return new JoinGroupResponse(data, version());
     }
 
-    public static JoinGroupRequest parse(ByteBuffer buffer, short version) {
-        return new JoinGroupRequest(new JoinGroupRequestData(new ByteBufferAccessor(buffer), version), version);
+    public static JoinGroupRequest parse(Readable readable, short version) {
+        return new JoinGroupRequest(new JoinGroupRequestData(readable, version), version);
     }
 }

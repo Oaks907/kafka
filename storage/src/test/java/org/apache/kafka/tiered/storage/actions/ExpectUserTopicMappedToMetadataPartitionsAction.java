@@ -16,25 +16,24 @@
  */
 package org.apache.kafka.tiered.storage.actions;
 
-import org.apache.kafka.tiered.storage.TieredStorageTestAction;
-import org.apache.kafka.tiered.storage.TieredStorageTestContext;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.server.log.remote.metadata.storage.RemoteLogMetadataTopicPartitioner;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerConfig;
+import org.apache.kafka.tiered.storage.TieredStorageTestAction;
+import org.apache.kafka.tiered.storage.TieredStorageTestContext;
 
 import java.io.PrintStream;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.apache.kafka.tiered.storage.utils.TieredStorageTestUtils.describeTopics;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public final class ExpectUserTopicMappedToMetadataPartitionsAction implements TieredStorageTestAction {
 
@@ -50,7 +49,7 @@ public final class ExpectUserTopicMappedToMetadataPartitionsAction implements Ti
     @Override
     public void doExecute(TieredStorageTestContext context) throws InterruptedException, ExecutionException {
         String metadataTopic = TopicBasedRemoteLogMetadataManagerConfig.REMOTE_LOG_METADATA_TOPIC_NAME;
-        Map<String, TopicDescription> descriptions = describeTopics(context, Arrays.asList(topic, metadataTopic));
+        Map<String, TopicDescription> descriptions = describeTopics(context, List.of(topic, metadataTopic));
         int metadataTopicPartitionCount = descriptions.get(metadataTopic).partitions().size();
         RemoteLogMetadataTopicPartitioner partitioner =
                 new RemoteLogMetadataTopicPartitioner(metadataTopicPartitionCount);

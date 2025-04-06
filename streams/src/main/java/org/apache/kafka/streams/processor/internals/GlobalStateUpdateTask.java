@@ -24,6 +24,7 @@ import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.streams.errors.DeserializationExceptionHandler;
 import org.apache.kafka.streams.errors.StreamsException;
 import org.apache.kafka.streams.processor.api.Record;
+
 import org.slf4j.Logger;
 
 import java.io.IOException;
@@ -41,7 +42,7 @@ public class GlobalStateUpdateTask implements GlobalStateMaintainer {
     private final LogContext logContext;
 
     private final ProcessorTopology topology;
-    private final InternalProcessorContext processorContext;
+    private final InternalProcessorContext<?, ?> processorContext;
     private final Map<TopicPartition, Long> offsets = new HashMap<>();
     private final Map<String, RecordDeserializer> deserializers = new HashMap<>();
     private final GlobalStateManager stateMgr;
@@ -52,7 +53,7 @@ public class GlobalStateUpdateTask implements GlobalStateMaintainer {
 
     public GlobalStateUpdateTask(final LogContext logContext,
                                  final ProcessorTopology topology,
-                                 final InternalProcessorContext processorContext,
+                                 final InternalProcessorContext<?, ?> processorContext,
                                  final GlobalStateManager stateMgr,
                                  final DeserializationExceptionHandler deserializationExceptionHandler,
                                  final Time time,
@@ -95,6 +96,7 @@ public class GlobalStateUpdateTask implements GlobalStateMaintainer {
         }
         initTopology();
         processorContext.initialize();
+        flushState();
         lastFlush = time.milliseconds();
         return stateMgr.changelogOffsets();
     }
@@ -118,8 +120,8 @@ public class GlobalStateUpdateTask implements GlobalStateMaintainer {
             final Record<Object, Object> toProcess = new Record<>(
                 deserialized.key(),
                 deserialized.value(),
-                processorContext.timestamp(),
-                processorContext.headers()
+                processorContext.recordContext().timestamp(),
+                processorContext.recordContext().headers()
             );
             ((SourceNode<Object, Object>) sourceNodeAndDeserializer.sourceNode()).process(toProcess);
         }
@@ -137,6 +139,9 @@ public class GlobalStateUpdateTask implements GlobalStateMaintainer {
     }
 
     public void close(final boolean wipeStateStore) throws IOException {
+        if (!wipeStateStore) {
+            flushState();
+        }
         stateMgr.close();
         if (wipeStateStore) {
             try {
@@ -148,12 +153,12 @@ public class GlobalStateUpdateTask implements GlobalStateMaintainer {
         }
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private void initTopology() {
         for (final ProcessorNode<?, ?, ?, ?> node : this.topology.processors()) {
             processorContext.setCurrentNode(node);
             try {
-                node.init(this.processorContext);
+                node.init((InternalProcessorContext) this.processorContext);
             } finally {
                 processorContext.setCurrentNode(null);
             }

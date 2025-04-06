@@ -17,10 +17,6 @@
 
 package org.apache.kafka.metadata.util;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigResource;
@@ -28,13 +24,17 @@ import org.apache.kafka.common.metadata.ConfigRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.metadata.UserScramCredentialRecord;
 import org.apache.kafka.metadata.KafkaConfigSchema;
+
 import org.junit.jupiter.api.Test;
+
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.apache.kafka.common.config.ConfigResource.Type.BROKER;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 
-final public class RecordRedactorTest {
+public final class RecordRedactorTest {
     public static final Map<ConfigResource.Type, ConfigDef> CONFIGS = new HashMap<>();
 
     static {
@@ -43,7 +43,7 @@ final public class RecordRedactorTest {
                 define("quux", ConfigDef.Type.PASSWORD, ConfigDef.Importance.HIGH, "quuux2 doc"));
     }
 
-    private static final KafkaConfigSchema SCHEMA = new KafkaConfigSchema(CONFIGS, Collections.emptyMap());
+    private static final KafkaConfigSchema SCHEMA = new KafkaConfigSchema(CONFIGS, Map.of());
 
     private static final RecordRedactor REDACTOR = new RecordRedactor(SCHEMA);
 

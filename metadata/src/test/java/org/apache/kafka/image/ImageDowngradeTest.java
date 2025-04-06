@@ -22,19 +22,17 @@ import org.apache.kafka.common.metadata.FeatureLevelRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.RegisterBrokerRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
-import org.apache.kafka.common.metadata.ZkMigrationStateRecord;
 import org.apache.kafka.image.writer.ImageWriterOptions;
 import org.apache.kafka.image.writer.RecordListWriter;
 import org.apache.kafka.image.writer.UnwritableMetadataException;
 import org.apache.kafka.metadata.RecordTestUtils;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.MetadataVersion;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -59,14 +57,14 @@ public class ImageDowngradeTest {
         }
     }
 
-    static final List<ApiMessageAndVersion> TEST_RECORDS = Arrays.asList(
+    static final List<ApiMessageAndVersion> TEST_RECORDS = List.of(
             new ApiMessageAndVersion(new TopicRecord().
                     setName("foo").
                     setTopicId(Uuid.fromString("5JPuABiJTPu2pQjpZWM6_A")), (short) 0),
             new ApiMessageAndVersion(new PartitionRecord().
                     setTopicId(Uuid.fromString("5JPuABiJTPu2pQjpZWM6_A")).
-                    setReplicas(Arrays.asList(0, 1)).
-                    setIsr(Arrays.asList(0, 1)).
+                    setReplicas(List.of(0, 1)).
+                    setIsr(List.of(0, 1)).
                     setLeader(0).
                     setLeaderEpoch(1).
                     setPartitionEpoch(2), (short) 0));
@@ -78,65 +76,14 @@ public class ImageDowngradeTest {
     }
 
     /**
-     * Test downgrading to a MetadataVersion that doesn't support FeatureLevelRecord.
-     */
-    @Test
-    public void testPremodernVersion() {
-        writeWithExpectedLosses(MetadataVersion.IBP_3_2_IV0,
-            Arrays.asList(
-                "feature flag(s): foo.feature"),
-            Arrays.asList(
-                metadataVersionRecord(MetadataVersion.IBP_3_3_IV0),
-                TEST_RECORDS.get(0),
-                TEST_RECORDS.get(1),
-                new ApiMessageAndVersion(new FeatureLevelRecord().
-                        setName("foo.feature").
-                        setFeatureLevel((short) 4), (short) 0)),
-            Arrays.asList(
-                TEST_RECORDS.get(0),
-                TEST_RECORDS.get(1)));
-    }
-
-    /**
-     * Test downgrading to a MetadataVersion that doesn't support inControlledShutdown.
-     */
-    @Test
-    public void testPreControlledShutdownStateVersion() {
-        writeWithExpectedLosses(MetadataVersion.IBP_3_3_IV2,
-                Arrays.asList(
-                        "the inControlledShutdown state of one or more brokers"),
-                Arrays.asList(
-                        metadataVersionRecord(MetadataVersion.IBP_3_3_IV3),
-                        new ApiMessageAndVersion(new RegisterBrokerRecord().
-                            setBrokerId(123).
-                            setIncarnationId(Uuid.fromString("XgjKo16hRWeWrTui0iR5Nw")).
-                            setBrokerEpoch(456).
-                            setRack(null).
-                            setFenced(false).
-                            setInControlledShutdown(true), (short) 1),
-                        TEST_RECORDS.get(0),
-                        TEST_RECORDS.get(1)),
-                Arrays.asList(
-                        metadataVersionRecord(MetadataVersion.IBP_3_3_IV2),
-                        new ApiMessageAndVersion(new RegisterBrokerRecord().
-                            setBrokerId(123).
-                            setIncarnationId(Uuid.fromString("XgjKo16hRWeWrTui0iR5Nw")).
-                            setBrokerEpoch(456).
-                            setRack(null).
-                            setFenced(false), (short) 0),
-                        TEST_RECORDS.get(0),
-                        TEST_RECORDS.get(1)));
-    }
-
-    /**
      * Test downgrading to a MetadataVersion that doesn't support ZK migration.
      */
     @Test
     public void testPreZkMigrationSupportVersion() {
         writeWithExpectedLosses(MetadataVersion.IBP_3_3_IV3,
-            Arrays.asList(
+            List.of(
                 "the isMigratingZkBroker state of one or more brokers"),
-            Arrays.asList(
+            List.of(
                 metadataVersionRecord(MetadataVersion.IBP_3_4_IV0),
                 new ApiMessageAndVersion(new RegisterBrokerRecord().
                     setBrokerId(123).
@@ -148,7 +95,7 @@ public class ImageDowngradeTest {
                     setIsMigratingZkBroker(true), (short) 2),
                 TEST_RECORDS.get(0),
                 TEST_RECORDS.get(1)),
-            Arrays.asList(
+            List.of(
                 metadataVersionRecord(MetadataVersion.IBP_3_3_IV3),
                 new ApiMessageAndVersion(new RegisterBrokerRecord().
                     setBrokerId(123).
@@ -158,7 +105,8 @@ public class ImageDowngradeTest {
                     setFenced(false).
                     setInControlledShutdown(true), (short) 1),
                 TEST_RECORDS.get(0),
-                TEST_RECORDS.get(1)));
+                TEST_RECORDS.get(1))
+        );
     }
 
     @Test
@@ -167,22 +115,23 @@ public class ImageDowngradeTest {
         MetadataVersion inputMetadataVersion = outputMetadataVersion;
         PartitionRecord testPartitionRecord = (PartitionRecord) TEST_RECORDS.get(1).message();
         writeWithExpectedLosses(outputMetadataVersion,
-                Collections.singletonList("the directory assignment state of one or more replicas"),
-                Arrays.asList(
-                        metadataVersionRecord(inputMetadataVersion),
-                        TEST_RECORDS.get(0),
-                        new ApiMessageAndVersion(
-                                testPartitionRecord.duplicate().setDirectories(Arrays.asList(
-                                        Uuid.fromString("c7QfSi6xSIGQVh3Qd5RJxA"),
-                                        Uuid.fromString("rWaCHejCRRiptDMvW5Xw0g"))),
-                                (short) 2)),
-                Arrays.asList(
-                        metadataVersionRecord(outputMetadataVersion),
-                        new ApiMessageAndVersion(new ZkMigrationStateRecord(), (short) 0),
-                        TEST_RECORDS.get(0),
-                        new ApiMessageAndVersion(
-                                testPartitionRecord.duplicate().setDirectories(Collections.emptyList()),
-                                (short) 0)));
+            List.of(
+                    "the directory assignment state of one or more replicas"),
+            List.of(
+                metadataVersionRecord(inputMetadataVersion),
+                TEST_RECORDS.get(0),
+                new ApiMessageAndVersion(
+                    testPartitionRecord.duplicate().setDirectories(List.of(
+                        Uuid.fromString("c7QfSi6xSIGQVh3Qd5RJxA"),
+                        Uuid.fromString("rWaCHejCRRiptDMvW5Xw0g"))),
+                    (short) 2)),
+            List.of(
+                metadataVersionRecord(outputMetadataVersion),
+                TEST_RECORDS.get(0),
+                new ApiMessageAndVersion(
+                    testPartitionRecord.duplicate().setDirectories(List.of()),
+                    (short) 0))
+        );
     }
 
     private static void writeWithExpectedLosses(
@@ -196,8 +145,7 @@ public class ImageDowngradeTest {
         RecordTestUtils.replayAll(delta, inputs);
         MetadataImage image = delta.apply(MetadataProvenance.EMPTY);
         RecordListWriter writer = new RecordListWriter();
-        image.write(writer, new ImageWriterOptions.Builder().
-                setMetadataVersion(metadataVersion).
+        image.write(writer, new ImageWriterOptions.Builder(metadataVersion).
                 setLossHandler(lossConsumer).
                 build());
         assertEquals(expectedLosses, lossConsumer.losses, "Failed to get expected metadata losses.");

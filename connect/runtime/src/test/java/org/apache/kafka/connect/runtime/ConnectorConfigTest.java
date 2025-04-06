@@ -26,7 +26,9 @@ import org.apache.kafka.connect.runtime.isolation.Plugins;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.transforms.Transformation;
 import org.apache.kafka.connect.transforms.predicates.Predicate;
-import org.junit.Test;
+import org.apache.kafka.connect.util.ConnectorTaskId;
+
+import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -34,14 +36,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThrows;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class ConnectorConfigTest<R extends ConnectRecord<R>> {
+
+    private static final ConnectMetrics METRICS = new MockConnectMetrics();
+    private static final ConnectorTaskId CONNECTOR_TASK_ID = new ConnectorTaskId("test", 0);
 
     public static final Plugins MOCK_PLUGINS = new Plugins(new HashMap<>()) {
         @Override
@@ -52,7 +59,7 @@ public class ConnectorConfigTest<R extends ConnectRecord<R>> {
 
     private static final SinkRecord DUMMY_RECORD = new SinkRecord(null, 0, null, null, null, null, 0L);
 
-    public static abstract class TestConnector extends Connector {
+    public abstract static class TestConnector extends Connector {
     }
 
     public static class SimpleTransformation<R extends ConnectRecord<R>> implements Transformation<R>, Versioned  {
@@ -156,7 +163,7 @@ public class ConnectorConfigTest<R extends ConnectRecord<R>> {
         props.put("transforms.a.type", SimpleTransformation.class.getName());
         props.put("transforms.a.magic.number", "42");
         final ConnectorConfig config = new ConnectorConfig(MOCK_PLUGINS, props);
-        final List<TransformationStage<SinkRecord>> transformationStages = config.transformationStages();
+        final List<TransformationStage<SinkRecord>> transformationStages = config.transformationStages(MOCK_PLUGINS, CONNECTOR_TASK_ID, METRICS);
         assertEquals(1, transformationStages.size());
         final TransformationStage<SinkRecord> stage = transformationStages.get(0);
         assertEquals(SimpleTransformation.class, stage.transformClass());
@@ -185,7 +192,7 @@ public class ConnectorConfigTest<R extends ConnectRecord<R>> {
         props.put("transforms.b.type", SimpleTransformation.class.getName());
         props.put("transforms.b.magic.number", "84");
         final ConnectorConfig config = new ConnectorConfig(MOCK_PLUGINS, props);
-        final List<TransformationStage<SinkRecord>> transformationStages = config.transformationStages();
+        final List<TransformationStage<SinkRecord>> transformationStages = config.transformationStages(MOCK_PLUGINS, CONNECTOR_TASK_ID, METRICS);
         assertEquals(2, transformationStages.size());
         assertEquals(42, transformationStages.get(0).apply(DUMMY_RECORD).kafkaPartition().intValue());
         assertEquals(84, transformationStages.get(1).apply(DUMMY_RECORD).kafkaPartition().intValue());
@@ -286,7 +293,7 @@ public class ConnectorConfigTest<R extends ConnectRecord<R>> {
 
     private void assertTransformationStageWithPredicate(Map<String, String> props, boolean expectedNegated) {
         final ConnectorConfig config = new ConnectorConfig(MOCK_PLUGINS, props);
-        final List<TransformationStage<SinkRecord>> transformationStages = config.transformationStages();
+        final List<TransformationStage<SinkRecord>> transformationStages = config.transformationStages(MOCK_PLUGINS, CONNECTOR_TASK_ID, METRICS);
         assertEquals(1, transformationStages.size());
         TransformationStage<SinkRecord> stage = transformationStages.get(0);
 
@@ -393,7 +400,7 @@ public class ConnectorConfigTest<R extends ConnectRecord<R>> {
         }
     }
 
-    public static abstract class AbstractTestPredicate<R extends ConnectRecord<R>> implements Predicate<R>, Versioned {
+    public abstract static class AbstractTestPredicate<R extends ConnectRecord<R>> implements Predicate<R>, Versioned {
 
         @Override
         public String version() {
@@ -404,7 +411,7 @@ public class ConnectorConfigTest<R extends ConnectRecord<R>> {
 
     }
 
-    public static abstract class AbstractTransformation<R extends ConnectRecord<R>> implements Transformation<R>, Versioned  {
+    public abstract static class AbstractTransformation<R extends ConnectRecord<R>> implements Transformation<R>, Versioned  {
 
         @Override
         public String version() {
@@ -413,7 +420,7 @@ public class ConnectorConfigTest<R extends ConnectRecord<R>> {
 
     }
 
-    public static abstract class AbstractKeyValueTransformation<R extends ConnectRecord<R>> implements Transformation<R>, Versioned  {
+    public abstract static class AbstractKeyValueTransformation<R extends ConnectRecord<R>> implements Transformation<R>, Versioned  {
         @Override
         public R apply(R record) {
             return null;
@@ -454,13 +461,19 @@ public class ConnectorConfigTest<R extends ConnectRecord<R>> {
     }
 
     @Test
-    public void testEnrichedConfigDef() {
+    @SuppressWarnings("rawtypes")
+    public void testEnrichedConfigDef() throws ClassNotFoundException {
         String alias = "hdt";
         String prefix = ConnectorConfig.TRANSFORMS_CONFIG + "." + alias + ".";
         Map<String, String> props = new HashMap<>();
         props.put(ConnectorConfig.TRANSFORMS_CONFIG, alias);
+        props.put(ConnectorConfig.CONNECTOR_CLASS_CONFIG, TestConnector.class.getName());
         props.put(prefix + "type", HasDuplicateConfigTransformation.class.getName());
-        ConfigDef def = ConnectorConfig.enrich(MOCK_PLUGINS, new ConfigDef(), props, false);
+        Plugins mockPlugins = mock(Plugins.class);
+        when(mockPlugins.newPlugin(HasDuplicateConfigTransformation.class.getName(),
+                null, (ClassLoader) null)).thenReturn(new HasDuplicateConfigTransformation());
+        when(mockPlugins.transformations()).thenReturn(Collections.emptySet());
+        ConfigDef def = ConnectorConfig.enrich(mockPlugins, new ConfigDef(), props, false);
         assertEnrichedConfigDef(def, prefix, HasDuplicateConfigTransformation.MUST_EXIST_KEY, ConfigDef.Type.BOOLEAN);
         assertEnrichedConfigDef(def, prefix, TransformationStage.PREDICATE_CONFIG, ConfigDef.Type.STRING);
         assertEnrichedConfigDef(def, prefix, TransformationStage.NEGATE_CONFIG, ConfigDef.Type.BOOLEAN);
@@ -469,8 +482,8 @@ public class ConnectorConfigTest<R extends ConnectRecord<R>> {
     private static void assertEnrichedConfigDef(ConfigDef def, String prefix, String keyName, ConfigDef.Type expectedType) {
         assertNull(def.configKeys().get(keyName));
         ConfigDef.ConfigKey configKey = def.configKeys().get(prefix + keyName);
-        assertNotNull(prefix + keyName + "' config must be present", configKey);
-        assertEquals(prefix + keyName + "' config should be a " + expectedType, expectedType, configKey.type);
+        assertNotNull(configKey, prefix + keyName + "' config must be present");
+        assertEquals(expectedType, configKey.type, prefix + keyName + "' config should be a " + expectedType);
     }
 
     public static class HasDuplicateConfigTransformation<R extends ConnectRecord<R>> implements Transformation<R>, Versioned {

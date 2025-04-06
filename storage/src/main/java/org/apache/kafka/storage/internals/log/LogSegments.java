@@ -18,23 +18,23 @@ package org.apache.kafka.storage.internals.log;
 
 import org.apache.kafka.common.TopicPartition;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.util.Collection;
-import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.function.Predicate;
-import java.util.stream.Collectors;
 
 /**
  * This class encapsulates a thread-safe navigable map of LogSegment instances and provides the
  * required read and write behavior on the map.
  */
-public class LogSegments {
+public class LogSegments implements Closeable {
 
     private final TopicPartition topicPartition;
     /* the segments of the log with key being LogSegment base offset and value being a LogSegment */
@@ -102,6 +102,7 @@ public class LogSegments {
     /**
      * Close all segments.
      */
+    @Override
     public void close() throws IOException {
         for (LogSegment s : values())
             s.close();
@@ -126,8 +127,6 @@ public class LogSegments {
     }
 
     /**
-     * Take care! this is an O(n) operation, where n is the number of segments.
-     *
      * This method is thread-safe.
      *
      * @return The number of segments.
@@ -141,7 +140,7 @@ public class LogSegments {
      * @return the base offsets of all segments
      */
     public Collection<Long> baseOffsets() {
-        return values().stream().map(s -> s.baseOffset()).collect(Collectors.toList());
+        return values().stream().map(LogSegment::baseOffset).toList();
     }
 
     /**
@@ -182,7 +181,7 @@ public class LogSegments {
     public Collection<LogSegment> values(long from, long to) {
         if (from == to) {
             // Handle non-segment-aligned empty sets
-            return Collections.emptyList();
+            return List.of();
         } else if (to < from) {
             throw new IllegalArgumentException("Invalid log segment range: requested segments in " + topicPartition +
                     " from offset " + from + " which is greater than limit offset " + to);
@@ -197,7 +196,7 @@ public class LogSegments {
     public Collection<LogSegment> nonActiveLogSegmentsFrom(long from) {
         LogSegment activeSegment = lastSegment().get();
         if (from > activeSegment.baseOffset())
-            return Collections.emptyList();
+            return List.of();
         else
             return values(from, activeSegment.baseOffset());
     }
@@ -219,7 +218,7 @@ public class LogSegments {
      * This method is thread-safe.
      */
     public Optional<LogSegment> floorSegment(long offset) {
-        return floorEntry(offset).map(e -> e.getValue());
+        return floorEntry(offset).map(Map.Entry::getValue);
     }
 
     /**
@@ -239,7 +238,7 @@ public class LogSegments {
      * This method is thread-safe.
      */
     public Optional<LogSegment> lowerSegment(long offset) {
-        return lowerEntry(offset).map(e -> e.getValue());
+        return lowerEntry(offset).map(Map.Entry::getValue);
     }
 
     /**
@@ -259,7 +258,7 @@ public class LogSegments {
      * This method is thread-safe.
      */
     public Optional<LogSegment> higherSegment(long offset) {
-        return higherEntry(offset).map(e -> e.getValue());
+        return higherEntry(offset).map(Map.Entry::getValue);
     }
 
     /**
@@ -277,17 +276,15 @@ public class LogSegments {
      * This method is thread-safe.
      */
     public Optional<LogSegment> firstSegment() {
-        return firstEntry().map(s -> s.getValue());
+        return firstEntry().map(Map.Entry::getValue);
     }
 
     /**
      * @return the base offset of the log segment associated with the smallest offset, if it exists
      */
     public OptionalLong firstSegmentBaseOffset() {
-        Optional<LogSegment> first = firstSegment();
-        if (first.isPresent())
-            return OptionalLong.of(first.get().baseOffset());
-        return OptionalLong.empty();
+        return firstSegment().map(logSegment -> OptionalLong.of(logSegment.baseOffset()))
+                .orElseGet(OptionalLong::empty);
     }
 
     /**
@@ -305,7 +302,7 @@ public class LogSegments {
      * This method is thread-safe.
      */
     public Optional<LogSegment> lastSegment() {
-        return lastEntry().map(e -> e.getValue());
+        return lastEntry().map(Map.Entry::getValue);
     }
 
     /**
@@ -316,7 +313,7 @@ public class LogSegments {
         Long higherOffset = segments.higherKey(baseOffset);
         if (higherOffset != null)
             return segments.tailMap(higherOffset, true).values();
-        return Collections.emptyList();
+        return List.of();
     }
 
     /**
@@ -336,7 +333,7 @@ public class LogSegments {
      * @param predicate the predicate to be used for filtering segments.
      */
     public Collection<LogSegment> filter(Predicate<LogSegment> predicate) {
-        return values().stream().filter(predicate).collect(Collectors.toList());
+        return values().stream().filter(predicate).toList();
     }
 
     /**
@@ -346,10 +343,6 @@ public class LogSegments {
      * @return Sum of the log segments' sizes (in bytes)
      */
     public static long sizeInBytes(Collection<LogSegment> segments) {
-        return segments.stream().mapToLong(s -> s.size()).sum();
-    }
-
-    public static Collection<Long> getFirstBatchTimestampForSegments(Collection<LogSegment> segments) {
-        return segments.stream().map(s -> s.getFirstBatchTimestamp()).collect(Collectors.toList());
+        return segments.stream().mapToLong(LogSegment::size).sum();
     }
 }

@@ -16,13 +16,15 @@
  */
 package org.apache.kafka.common.message;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.protocol.ByteBufferAccessor;
 import org.apache.kafka.common.protocol.MessageUtil;
 import org.apache.kafka.common.protocol.ObjectSerializationCache;
 import org.apache.kafka.common.utils.ByteUtils;
+
+import com.fasterxml.jackson.databind.JsonNode;
+
 import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;
@@ -82,7 +84,7 @@ public class SimpleExampleMessageTest {
         out.setProcessId(uuid);
         out.setZeroCopyByteBuffer(buf);
 
-        final ByteBuffer buffer = MessageUtil.toByteBuffer(out, (short) 1);
+        final ByteBuffer buffer = MessageUtil.toByteBufferAccessor(out, (short) 1).buffer();
 
         final SimpleExampleMessageData in = new SimpleExampleMessageData();
         in.read(new ByteBufferAccessor(buffer), (short) 1);
@@ -104,7 +106,7 @@ public class SimpleExampleMessageTest {
         out.setZeroCopyByteBuffer(buf1);
         out.setNullableZeroCopyByteBuffer(buf2);
 
-        final ByteBuffer buffer = MessageUtil.toByteBuffer(out, (short) 1);
+        final ByteBuffer buffer = MessageUtil.toByteBufferAccessor(out, (short) 1).buffer();
 
         final SimpleExampleMessageData in = new SimpleExampleMessageData();
         in.read(new ByteBufferAccessor(buffer), (short) 1);
@@ -357,7 +359,9 @@ public class SimpleExampleMessageTest {
         SimpleExampleMessageData message,
         short version
     ) {
-        ByteBuffer buf = MessageUtil.toByteBuffer(message, version);
+        ByteBuffer buf = MessageUtil.toByteBufferAccessor(message, version).buffer();
+        // Check size calculation
+        assertEquals(buf.remaining(), message.size(new ObjectSerializationCache(), version));
         return deserialize(buf.duplicate(), version);
     }
 

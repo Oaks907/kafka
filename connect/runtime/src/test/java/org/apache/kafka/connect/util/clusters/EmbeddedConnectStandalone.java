@@ -18,16 +18,27 @@ package org.apache.kafka.connect.util.clusters;
 
 import org.apache.kafka.connect.cli.ConnectStandalone;
 import org.apache.kafka.connect.runtime.Connect;
+import org.apache.kafka.connect.runtime.ConnectMetrics;
+import org.apache.kafka.connect.runtime.standalone.StandaloneHerder;
 import org.apache.kafka.test.TestUtils;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
+
+import jakarta.ws.rs.core.Response;
 
 import static org.apache.kafka.connect.runtime.ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG;
 import static org.apache.kafka.connect.runtime.ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG;
@@ -37,7 +48,7 @@ import static org.apache.kafka.connect.runtime.rest.RestServerConfig.LISTENERS_C
 import static org.apache.kafka.connect.runtime.standalone.StandaloneConfig.OFFSET_STORAGE_FILE_FILENAME_CONFIG;
 
 /**
- * Start a standalone embedded connect worker. Internally, this class will spin up a Kafka and Zk cluster,
+ * Start a standalone embedded connect worker. Internally, this class will spin up a Kafka cluster,
  * set up any tmp directories. and clean them up on exit. Methods on the same
  * {@code EmbeddedConnectStandalone} are not guaranteed to be thread-safe.
  */
@@ -48,9 +59,11 @@ public class EmbeddedConnectStandalone extends EmbeddedConnect {
     private static final String REST_HOST_NAME = "localhost";
 
     private final Map<String, String> workerProps;
+    private final List<Map<String, String>> connectorConfigs;
     private final String offsetsFile;
 
-    private WorkerHandle connectWorker;
+    private volatile WorkerHandle connectWorker;
+    private Connect<StandaloneHerder> connect;
 
     private EmbeddedConnectStandalone(
             int numBrokers,
@@ -58,10 +71,12 @@ public class EmbeddedConnectStandalone extends EmbeddedConnect {
             boolean maskExitProcedures,
             Map<String, String> clientProps,
             Map<String, String> workerProps,
+            List<Map<String, String>> connectorConfigs,
             String offsetsFile
     ) {
         super(numBrokers, brokerProps, maskExitProcedures, clientProps);
         this.workerProps = workerProps;
+        this.connectorConfigs = connectorConfigs;
         this.offsetsFile = offsetsFile;
     }
 
@@ -78,8 +93,10 @@ public class EmbeddedConnectStandalone extends EmbeddedConnect {
         workerProps.putIfAbsent(VALUE_CONVERTER_CLASS_CONFIG, "org.apache.kafka.connect.storage.StringConverter");
         workerProps.putIfAbsent(PLUGIN_DISCOVERY_CONFIG, "hybrid_fail");
 
-        Connect connect = new ConnectStandalone().startConnect(workerProps);
+        ConnectStandalone cli = new ConnectStandalone();
+        connect = cli.startConnect(workerProps);
         connectWorker = new WorkerHandle("standalone", connect);
+        cli.processExtraArgs(connect, connectorConfigFiles());
     }
 
     @Override
@@ -96,12 +113,48 @@ public class EmbeddedConnectStandalone extends EmbeddedConnect {
                 : Collections.emptySet();
     }
 
+    public Response healthCheck() {
+        Objects.requireNonNull(connectWorker, "Cannot perform health check before starting worker");
+        return healthCheck(connectWorker);
+    }
+
+    private String[] connectorConfigFiles() {
+        String[] result = new String[connectorConfigs.size()];
+
+        for (int i = 0; i < connectorConfigs.size(); i++) {
+            try {
+                File connectorConfigFile = TestUtils.tempFile("standalone-connect", "connector-" + i);
+                Properties connectorConfigProps = new Properties();
+                connectorConfigProps.putAll(connectorConfigs.get(i));
+
+                try (OutputStream outputStream = Files.newOutputStream(connectorConfigFile.toPath())) {
+                    connectorConfigProps.store(outputStream, "");
+                }
+                result[i] = connectorConfigFile.getAbsolutePath();
+            } catch (IOException e) {
+                throw new UncheckedIOException("Failed to create temporary config file for connector " + i, e);
+            }
+        }
+
+        return result;
+    }
+
+    public ConnectMetrics connectMetrics() {
+        return connect.herder().connectMetrics();
+    }
+
     public static class Builder extends EmbeddedConnectBuilder<EmbeddedConnectStandalone, Builder> {
 
+        private final List<Map<String, String>> connectorConfigs = new ArrayList<>();
         private String offsetsFile = null;
 
         public Builder offsetsFile(String offsetsFile) {
             this.offsetsFile = offsetsFile;
+            return this;
+        }
+
+        public Builder withCommandLineConnector(Map<String, String> connectorConfig) {
+            this.connectorConfigs.add(connectorConfig);
             return this;
         }
 
@@ -122,6 +175,7 @@ public class EmbeddedConnectStandalone extends EmbeddedConnect {
                     maskExitProcedures,
                     clientProps,
                     workerProps,
+                    connectorConfigs,
                     offsetsFile
             );
         }

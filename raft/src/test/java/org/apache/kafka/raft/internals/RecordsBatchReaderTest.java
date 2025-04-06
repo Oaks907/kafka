@@ -26,6 +26,7 @@ import org.apache.kafka.common.utils.BufferSupplier;
 import org.apache.kafka.raft.BatchReader;
 import org.apache.kafka.raft.ControlRecord;
 import org.apache.kafka.raft.internals.RecordsIteratorTest.TestBatch;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -91,7 +92,7 @@ class RecordsBatchReaderTest {
             )
         ) {
             assertTrue(reader.hasNext());
-            assertEquals(Collections.singletonList(expectedRecord), reader.next().controlRecords());
+            assertEquals(List.of(expectedRecord), reader.next().controlRecords());
             assertFalse(reader.hasNext());
         }
     }
@@ -142,6 +143,6 @@ class RecordsBatchReaderTest {
         }
 
         Mockito.verify(closeListener).onClose(reader);
-        assertEquals(Collections.emptySet(), allocatedBuffers);
+        assertEquals(Set.of(), allocatedBuffers);
     }
 }

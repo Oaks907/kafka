@@ -37,24 +37,7 @@ public class ControllerExceptions {
             exception = exception.getCause();
             if (exception == null) return false;
         }
-        if (!(exception instanceof TimeoutException)) return false;
-        return true;
-    }
-
-    /**
-     * Check if an exception is a NotController exception.
-     *
-     * @param exception     The exception to check.
-     * @return              True if the exception is a NotController exception.
-     */
-    public static boolean isNotControllerException(Throwable exception) {
-        if (exception == null) return false;
-        if (exception instanceof ExecutionException) {
-            exception = exception.getCause();
-            if (exception == null) return false;
-        }
-        if (!(exception instanceof NotControllerException)) return false;
-        return true;
+        return exception instanceof TimeoutException;
     }
 
     /**

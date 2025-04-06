@@ -35,12 +35,11 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.stream.Collectors;
 
 import static org.apache.kafka.server.log.remote.storage.LocalTieredStorageCondition.expectEvent;
 import static org.apache.kafka.server.log.remote.storage.LocalTieredStorageEvent.EventType.COPY_SEGMENT;
-import static org.apache.kafka.tiered.storage.utils.TieredStorageTestUtils.tieredStorageRecords;
 import static org.apache.kafka.tiered.storage.utils.RecordsKeyValueMatcher.correspondTo;
+import static org.apache.kafka.tiered.storage.utils.TieredStorageTestUtils.tieredStorageRecords;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 public final class ProduceAction implements TieredStorageTestAction {
@@ -50,7 +49,7 @@ public final class ProduceAction implements TieredStorageTestAction {
      * This timeout should exceed the {@link org.apache.kafka.tiered.storage.utils.TieredStorageTestUtils#STORAGE_WAIT_TIMEOUT_SEC}
      * so that the test can verify that the active segment gets rolled and offloaded to the remote storage.
      */
-    private static final int OFFLOAD_WAIT_TIMEOUT_SEC = 40;
+    private static final int OFFLOAD_WAIT_TIMEOUT_SEC = 10;
 
     private final TopicPartition topicPartition;
     private final List<OffloadedSegmentSpec> offloadedSegmentSpecs;
@@ -85,7 +84,7 @@ public final class ProduceAction implements TieredStorageTestAction {
                         spec.getTopicPartition(),
                         spec.getBaseOffset(),
                         false))
-                .collect(Collectors.toList());
+                .toList();
 
         // Retrieve the offset of the next record which would be consumed from the topic-partition
         // before records are produced. This allows consuming only the newly produced records afterwards.
@@ -140,7 +139,7 @@ public final class ProduceAction implements TieredStorageTestAction {
 
         List<ProducerRecord<String, String>> producerRecords = offloadedSegmentSpecs.stream()
                 .flatMap(spec -> spec.getRecords().stream())
-                .collect(Collectors.toList());
+                .toList();
         compareRecords(discoveredRecords, producerRecords, topicPartition);
     }
 

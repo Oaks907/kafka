@@ -17,6 +17,7 @@
 package org.apache.kafka.server.metrics;
 
 import org.apache.kafka.common.Uuid;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -34,7 +35,7 @@ public class ClientMetricsInstanceTest {
         Uuid uuid = Uuid.randomUuid();
         ClientMetricsInstanceMetadata instanceMetadata = new ClientMetricsInstanceMetadata(uuid,
             ClientMetricsTestUtils.requestContext());
-        clientInstance = new ClientMetricsInstance(uuid, instanceMetadata, 0, 0, null, ClientMetricsConfigs.DEFAULT_INTERVAL_MS);
+        clientInstance = new ClientMetricsInstance(uuid, instanceMetadata, 0, 0, null, ClientMetricsConfigs.INTERVAL_MS_DEFAULT);
     }
 
     @Test
@@ -46,7 +47,7 @@ public class ClientMetricsInstanceTest {
 
     @Test
     public void testMaybeUpdateGetRequestAfterElapsedTimeValid() {
-        assertTrue(clientInstance.maybeUpdateGetRequestTimestamp(System.currentTimeMillis() - ClientMetricsConfigs.DEFAULT_INTERVAL_MS));
+        assertTrue(clientInstance.maybeUpdateGetRequestTimestamp(System.currentTimeMillis() - ClientMetricsConfigs.INTERVAL_MS_DEFAULT));
         // Second request should be accepted as time since last request is greater than the push interval.
         assertTrue(clientInstance.maybeUpdateGetRequestTimestamp(System.currentTimeMillis()));
     }
@@ -60,7 +61,7 @@ public class ClientMetricsInstanceTest {
 
     @Test
     public void testMaybeUpdatePushRequestAfterElapsedTimeValid() {
-        assertTrue(clientInstance.maybeUpdatePushRequestTimestamp(System.currentTimeMillis() - ClientMetricsConfigs.DEFAULT_INTERVAL_MS));
+        assertTrue(clientInstance.maybeUpdatePushRequestTimestamp(System.currentTimeMillis() - ClientMetricsConfigs.INTERVAL_MS_DEFAULT));
         // Second request should be accepted as time since last request is greater than the push interval.
         assertTrue(clientInstance.maybeUpdatePushRequestTimestamp(System.currentTimeMillis()));
     }
@@ -81,7 +82,7 @@ public class ClientMetricsInstanceTest {
 
     @Test
     public void testMaybeUpdatePushRequestWithImmediateRetryAfterGetValid() {
-        assertTrue(clientInstance.maybeUpdatePushRequestTimestamp(System.currentTimeMillis() - ClientMetricsConfigs.DEFAULT_INTERVAL_MS));
+        assertTrue(clientInstance.maybeUpdatePushRequestTimestamp(System.currentTimeMillis() - ClientMetricsConfigs.INTERVAL_MS_DEFAULT));
         assertTrue(clientInstance.maybeUpdateGetRequestTimestamp(System.currentTimeMillis()));
         // Next request after get should be accepted.
         assertTrue(clientInstance.maybeUpdatePushRequestTimestamp(System.currentTimeMillis() + 1));

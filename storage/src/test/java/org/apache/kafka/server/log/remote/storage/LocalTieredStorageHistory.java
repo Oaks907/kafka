@@ -18,6 +18,7 @@ package org.apache.kafka.server.log.remote.storage;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.server.log.remote.storage.LocalTieredStorageEvent.EventType;
+
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -26,7 +27,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Predicate;
-import java.util.stream.Collectors;
 
 import static java.util.Arrays.stream;
 import static java.util.Collections.unmodifiableMap;
@@ -68,7 +68,7 @@ public final class LocalTieredStorageHistory {
             matchingTypeEvents = new ArrayList<>(matchingTypeEvents);
         }
 
-        return matchingTypeEvents.stream().filter(matches(topicPartition)).collect(Collectors.toList());
+        return matchingTypeEvents.stream().filter(matches(topicPartition)).toList();
     }
 
     /**

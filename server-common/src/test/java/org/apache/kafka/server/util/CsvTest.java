@@ -18,21 +18,17 @@ package org.apache.kafka.server.util;
 
 import org.junit.jupiter.api.Test;
 
-import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 public class CsvTest {
 
     @Test
     public void testCsvMap() {
-        String emptyString = "";
-        Map<String, String> emptyMap = Csv.parseCsvMap(emptyString);
-        Map<String, String> emptyStringMap = Collections.emptyMap();
-        assertNotNull(emptyMap);
-        assertEquals(emptyStringMap, emptyStringMap);
+        Map<String, String> emptyMap = Csv.parseCsvMap("");
+        assertEquals(Map.of(), emptyMap);
 
         String kvPairsIpV6 = "a:b:c:v,a:b:c:v";
         Map<String, String> ipv6Map = Csv.parseCsvMap(kvPairsIpV6);
@@ -59,5 +55,17 @@ public class CsvTest {
             assertEquals("key", entry.getKey());
             assertEquals("value", entry.getValue());
         }
+    }
+
+    @Test
+    public void testCsvList() {
+        List<String> emptyList = Csv.parseCsvList("");
+        assertEquals(List.of(), emptyList);
+
+        List<String> emptyListFromNullString = Csv.parseCsvList(null);
+        assertEquals(List.of(), emptyListFromNullString);
+
+        List<String> csvList = Csv.parseCsvList("a,b ,c, d,,e,");
+        assertEquals(List.of("a", "b", "c", "d", "e"), csvList);
     }
 }

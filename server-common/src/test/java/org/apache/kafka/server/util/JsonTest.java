@@ -17,17 +17,18 @@
 
 package org.apache.kafka.server.util;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.server.util.json.DecodeJson;
 import org.apache.kafka.server.util.json.JsonObject;
 import org.apache.kafka.server.util.json.JsonValue;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import org.junit.jupiter.api.Test;
 
 import java.util.AbstractMap;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -112,7 +113,7 @@ public class JsonTest {
 
         Map.Entry<String, JsonValue> entryA = new AbstractMap.SimpleEntry<>("a", parse("true"));
         AbstractMap.SimpleEntry<String, JsonValue> entryB = new AbstractMap.SimpleEntry<>("b", parse("false"));
-        List<Map.Entry<String, JsonValue>> expectedResult = Arrays.asList(entryA, entryB);
+        List<Map.Entry<String, JsonValue>> expectedResult = List.of(entryA, entryB);
 
         assertEquals(expectedResult, results);
     }
@@ -195,7 +196,7 @@ public class JsonTest {
     @Test
     public void testDecodeSeq() throws JsonMappingException {
         DecodeJson<List<Double>> decodeJson = DecodeJson.decodeList(new DecodeJson.DecodeDouble());
-        assertTo(Arrays.asList(4.0, 11.1, 44.5), decodeJson, jsonObject -> jsonObject.get("array").get());
+        assertTo(List.of(4.0, 11.1, 44.5), decodeJson, jsonObject -> jsonObject.get("array").get());
         assertToFails(decodeJson, jsonObject -> jsonObject.get("string").get());
         assertToFails(decodeJson, jsonObject -> jsonObject.get("object").get());
         assertToFails(DecodeJson.decodeList(new DecodeJson.DecodeString()), jsonObject -> jsonObject.get("array").get());

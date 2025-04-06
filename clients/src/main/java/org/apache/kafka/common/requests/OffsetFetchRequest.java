@@ -16,9 +16,6 @@
  */
 package org.apache.kafka.common.requests;
 
-import java.util.Collections;
-import java.util.Map.Entry;
-import java.util.stream.Collectors;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.message.OffsetFetchRequestData;
@@ -26,17 +23,20 @@ import org.apache.kafka.common.message.OffsetFetchRequestData.OffsetFetchRequest
 import org.apache.kafka.common.message.OffsetFetchRequestData.OffsetFetchRequestTopic;
 import org.apache.kafka.common.message.OffsetFetchRequestData.OffsetFetchRequestTopics;
 import org.apache.kafka.common.protocol.ApiKeys;
-import org.apache.kafka.common.protocol.ByteBufferAccessor;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.protocol.Readable;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 public class OffsetFetchRequest extends AbstractRequest {
 
@@ -237,12 +237,12 @@ public class OffsetFetchRequest extends AbstractRequest {
                 group.setTopics(null);
             } else {
                 // Otherwise, topics are translated to the new structure.
-                data.topics().forEach(topic -> {
+                data.topics().forEach(topic ->
                     group.topics().add(new OffsetFetchRequestTopics()
                         .setName(topic.name())
                         .setPartitionIndexes(topic.partitionIndexes())
-                    );
-                });
+                    )
+                );
             }
 
             return Collections.singletonList(group);
@@ -328,8 +328,8 @@ public class OffsetFetchRequest extends AbstractRequest {
         return getErrorResponse(throttleTimeMs, Errors.forException(e));
     }
 
-    public static OffsetFetchRequest parse(ByteBuffer buffer, short version) {
-        return new OffsetFetchRequest(new OffsetFetchRequestData(new ByteBufferAccessor(buffer), version), version);
+    public static OffsetFetchRequest parse(Readable readable, short version) {
+        return new OffsetFetchRequest(new OffsetFetchRequestData(readable, version), version);
     }
 
     public boolean isAllPartitions() {

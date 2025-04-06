@@ -23,6 +23,7 @@ import org.apache.kafka.common.message.OffsetCommitResponseData.OffsetCommitResp
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.MessageUtil;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -86,7 +87,7 @@ public class OffsetCommitResponseTest {
             .setThrottleTimeMs(throttleTimeMs);
 
         for (short version : ApiKeys.OFFSET_COMMIT.allVersions()) {
-            ByteBuffer buffer = MessageUtil.toByteBuffer(data, version);
+            ByteBuffer buffer = MessageUtil.toByteBufferAccessor(data, version).buffer();
             OffsetCommitResponse response = OffsetCommitResponse.parse(buffer, version);
             assertEquals(expectedErrorCounts, response.errorCounts());
 

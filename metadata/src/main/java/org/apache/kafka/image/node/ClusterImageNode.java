@@ -19,15 +19,15 @@ package org.apache.kafka.image.node;
 
 import org.apache.kafka.image.ClusterImage;
 
-import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 
 
 public class ClusterImageNode implements MetadataNode {
     /**
      * The name of this node.
      */
-    public final static String NAME = "cluster";
+    public static final String NAME = "cluster";
 
     /**
      * The cluster image.
@@ -40,7 +40,7 @@ public class ClusterImageNode implements MetadataNode {
 
     @Override
     public Collection<String> childNames() {
-        return Arrays.asList(ClusterImageBrokersNode.NAME, ClusterImageControllersNode.NAME);
+        return List.of(ClusterImageBrokersNode.NAME, ClusterImageControllersNode.NAME);
     }
 
     @Override

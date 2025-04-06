@@ -20,7 +20,6 @@ package kafka.security.authorizer
 import java.net.InetAddress
 import java.util.UUID
 import kafka.server.KafkaConfig
-import kafka.zookeeper.ZooKeeperClient
 import org.apache.kafka.common.acl.AclOperation.{ALL, READ, WRITE}
 import org.apache.kafka.common.acl.AclPermissionType.{ALLOW, DENY}
 import org.apache.kafka.common.acl.{AccessControlEntry, AccessControlEntryFilter, AclBinding, AclBindingFilter, AclOperation}
@@ -50,7 +49,6 @@ trait BaseAuthorizerTest {
   val requestContext: RequestContext = newRequestContext(principal, InetAddress.getByName("192.168.0.1"))
   val superUserName = "superuser1"
   var config: KafkaConfig = _
-  var zooKeeperClient: ZooKeeperClient = _
   var resource: ResourcePattern = _
 
   @Test
@@ -234,7 +232,7 @@ trait BaseAuthorizerTest {
     val user1 = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "user1")
     val host1 = InetAddress.getByName("192.168.1.1")
     val host2 = InetAddress.getByName("192.168.1.2")
-    val allHost = AclEntry.WILDCARD_HOST;
+    val allHost = AclEntry.WILDCARD_HOST
     val resource1 = new ResourcePattern(TOPIC, "sb1" + UUID.randomUUID(), LITERAL)
     val resource2 = new ResourcePattern(TOPIC, "sb2" + UUID.randomUUID(), LITERAL)
     val allowHost1 = new AccessControlEntry(user1.toString, host1.getHostAddress, READ, ALLOW)
@@ -312,7 +310,7 @@ trait BaseAuthorizerTest {
   }
 
   @Test
-  def testAuthorzeByResourceTypeSuperUserHasAccess(): Unit = {
+  def testAuthorizeByResourceTypeSuperUserHasAccess(): Unit = {
     val denyAllAce = new AccessControlEntry(WILDCARD_PRINCIPAL_STRING, WILDCARD_HOST, AclOperation.ALL, DENY)
     val superUser1 = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, superUserName)
     val host1 = InetAddress.getByName("192.0.4.4")

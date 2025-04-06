@@ -48,32 +48,37 @@ import org.apache.kafka.test.MockProcessorSupplier;
 import org.apache.kafka.test.MockReducer;
 import org.apache.kafka.test.NoOpValueTransformerWithKeySupplier;
 import org.apache.kafka.test.TestUtils;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.hasItems;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.isA;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
-@RunWith(MockitoJUnitRunner.StrictStubs.class)
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.STRICT_STUBS)
 @SuppressWarnings("deprecation") // Old PAPI. Needs to be migrated.
 public class KTableTransformValuesTest {
     private static final String QUERYABLE_NAME = "queryable-store";
@@ -101,7 +106,7 @@ public class KTableTransformValuesTest {
     @Mock
     private ValueTransformerWithKey<String, String, String> transformer;
 
-    @After
+    @AfterEach
     public void cleanup() {
         if (driver != null) {
             driver.close();
@@ -109,7 +114,7 @@ public class KTableTransformValuesTest {
         }
     }
 
-    @Before
+    @BeforeEach
     public void setUp() {
         capture = new MockProcessorSupplier<>();
         builder = new StreamsBuilder();
@@ -335,7 +340,7 @@ public class KTableTransformValuesTest {
                 new KeyValueTimestamp<>("B", "B->b!", 10),
                 new KeyValueTimestamp<>("D", "D->null!", 15)
         ));
-        assertNull("Store should not be materialized", driver.getKeyValueStore(QUERYABLE_NAME));
+        assertNull(driver.getKeyValueStore(QUERYABLE_NAME), "Store should not be materialized");
     }
 
     @Test
@@ -406,6 +411,8 @@ public class KTableTransformValuesTest {
 
         final KeyValueStore<String, Integer> keyValueStore = driver.getKeyValueStore(QUERYABLE_NAME);
         assertThat(keyValueStore.get("A"), is(3));
+        assertThat(driver.getAllStateStores().keySet(),
+            equalTo(Set.of(QUERYABLE_NAME, "KTABLE-AGGREGATE-STATE-STORE-0000000005")));
     }
 
     @Test
@@ -430,6 +437,36 @@ public class KTableTransformValuesTest {
         assertThat(output(), equalTo(Arrays.asList(new KeyValueTimestamp<>("A", "1", 5),
                 new KeyValueTimestamp<>("A", "2", 15),
                 new KeyValueTimestamp<>("A", "3", 15))));
+        assertThat(driver.getAllStateStores().keySet(),
+            equalTo(Set.of("inputTopic-STATE-STORE-0000000000", "KTABLE-AGGREGATE-STATE-STORE-0000000005")));
+    }
+
+    @Test
+    public void shouldCalculateCorrectOldValuesIfNotStatefulEvenNotMaterializedNoQueryableName() {
+        builder
+            .table(INPUT_TOPIC, CONSUMED)
+            .transformValues(new StatelessTransformerSupplier(),
+                Materialized.with(Serdes.String(), Serdes.Integer())
+            )
+            .groupBy(toForceSendingOfOldValues(), Grouped.with(Serdes.String(), Serdes.Integer()))
+            .reduce(MockReducer.INTEGER_ADDER, MockReducer.INTEGER_SUBTRACTOR)
+            .mapValues(mapBackToStrings())
+            .toStream()
+            .process(capture);
+
+        driver = new TopologyTestDriver(builder.build(), props());
+        final TestInputTopic<String, String> inputTopic =
+            driver.createInputTopic(INPUT_TOPIC, new StringSerializer(), new StringSerializer());
+
+        inputTopic.pipeInput("A", "a", 5L);
+        inputTopic.pipeInput("A", "aa", 15L);
+        inputTopic.pipeInput("A", "aaa", 10);
+
+        assertThat(output(), equalTo(Arrays.asList(new KeyValueTimestamp<>("A", "1", 5),
+            new KeyValueTimestamp<>("A", "2", 15),
+            new KeyValueTimestamp<>("A", "3", 15))));
+        assertThat(driver.getAllStateStores().keySet(),
+            equalTo(Set.of("inputTopic-STATE-STORE-0000000000", "KTABLE-AGGREGATE-STATE-STORE-0000000005")));
     }
 
     private ArrayList<KeyValueTimestamp<String, String>> output() {

@@ -16,8 +16,8 @@
  */
 package org.apache.kafka.connect.runtime.rest;
 
-import com.fasterxml.jackson.jaxrs.json.JacksonJsonProvider;
 import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.internals.Plugin;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.health.ConnectClusterDetails;
@@ -28,6 +28,13 @@ import org.apache.kafka.connect.runtime.health.ConnectClusterDetailsImpl;
 import org.apache.kafka.connect.runtime.health.ConnectClusterStateImpl;
 import org.apache.kafka.connect.runtime.rest.errors.ConnectExceptionMapper;
 import org.apache.kafka.connect.runtime.rest.util.SSLUtils;
+
+import com.fasterxml.jackson.jakarta.rs.json.JacksonJsonProvider;
+
+import org.eclipse.jetty.ee10.servlet.FilterHolder;
+import org.eclipse.jetty.ee10.servlet.ServletContextHandler;
+import org.eclipse.jetty.ee10.servlet.ServletHolder;
+import org.eclipse.jetty.ee10.servlets.HeaderFilter;
 import org.eclipse.jetty.server.Connector;
 import org.eclipse.jetty.server.CustomRequestLog;
 import org.eclipse.jetty.server.Handler;
@@ -35,12 +42,8 @@ import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.server.Slf4jRequestLogWriter;
 import org.eclipse.jetty.server.handler.ContextHandlerCollection;
+import org.eclipse.jetty.server.handler.CrossOriginHandler;
 import org.eclipse.jetty.server.handler.StatisticsHandler;
-import org.eclipse.jetty.servlet.FilterHolder;
-import org.eclipse.jetty.servlet.ServletContextHandler;
-import org.eclipse.jetty.servlet.ServletHolder;
-import org.eclipse.jetty.servlets.CrossOriginFilter;
-import org.eclipse.jetty.servlets.HeaderFilter;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.glassfish.hk2.utilities.Binder;
 import org.glassfish.hk2.utilities.binding.AbstractBinder;
@@ -50,8 +53,6 @@ import org.glassfish.jersey.servlet.ServletContainer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.servlet.DispatcherType;
-import javax.ws.rs.core.UriBuilder;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
@@ -60,9 +61,13 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import jakarta.servlet.DispatcherType;
+import jakarta.ws.rs.core.UriBuilder;
 
 /**
  * Embedded server for the REST API that provides the control plane for Kafka Connect workers.
@@ -74,6 +79,7 @@ public abstract class RestServer {
     // we need to consider all possible scenarios this could fail. It might be ok to fail with a timeout in rare cases,
     // but currently a worker simply leaving the group can take this long as well.
     public static final long DEFAULT_REST_REQUEST_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(90);
+    public static final long DEFAULT_HEALTH_CHECK_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(10);
 
     private static final Logger log = LoggerFactory.getLogger(RestServer.class);
 
@@ -91,7 +97,7 @@ public abstract class RestServer {
     private final Server jettyServer;
     private final RequestTimeout requestTimeout;
 
-    private List<ConnectRestExtension> connectRestExtensions = Collections.emptyList();
+    private List<Plugin<ConnectRestExtension>> connectRestExtensionPlugins = Collections.emptyList();
 
     /**
      * Create a REST server for this herder using the specified configs.
@@ -104,7 +110,7 @@ public abstract class RestServer {
 
         jettyServer = new Server();
         handlers = new ContextHandlerCollection();
-        requestTimeout = new RequestTimeout(DEFAULT_REST_REQUEST_TIMEOUT_MS);
+        requestTimeout = new RequestTimeout(DEFAULT_REST_REQUEST_TIMEOUT_MS, DEFAULT_HEALTH_CHECK_TIMEOUT_MS);
 
         createConnectors(listeners, adminListeners);
     }
@@ -185,6 +191,9 @@ public abstract class RestServer {
 
         connector.setPort(port);
 
+        // TODO: do we need this?
+        connector.setIdleTimeout(requestTimeout.timeoutMs());
+
         return connector;
     }
 
@@ -209,10 +218,10 @@ public abstract class RestServer {
             throw new ConnectException("Unable to initialize REST server", e);
         }
 
-        log.info("REST server listening at " + jettyServer.getURI() + ", advertising URL " + advertisedUrl());
+        log.info("REST server listening at {}, advertising URL {}", jettyServer.getURI(), advertisedUrl());
         URI adminUrl = adminUrl();
         if (adminUrl != null)
-            log.info("REST admin endpoints at " + adminUrl);
+            log.info("REST admin endpoints at {}", adminUrl);
     }
 
     protected final void initializeResources() {
@@ -259,20 +268,21 @@ public abstract class RestServer {
             ServletHolder adminServletHolder = new ServletHolder(new ServletContainer(adminResourceConfig));
             adminContext.setContextPath("/");
             adminContext.addServlet(adminServletHolder, "/*");
-            adminContext.setVirtualHosts(new String[]{"@" + ADMIN_SERVER_CONNECTOR_NAME});
+            adminContext.setVirtualHosts(List.of("@" + ADMIN_SERVER_CONNECTOR_NAME));
             contextHandlers.add(adminContext);
         }
 
         String allowedOrigins = config.allowedOrigins();
         if (!Utils.isBlank(allowedOrigins)) {
-            FilterHolder filterHolder = new FilterHolder(new CrossOriginFilter());
-            filterHolder.setName("cross-origin");
-            filterHolder.setInitParameter(CrossOriginFilter.ALLOWED_ORIGINS_PARAM, allowedOrigins);
+            CrossOriginHandler crossOriginHandler = new CrossOriginHandler();
+            crossOriginHandler.setAllowedOriginPatterns(Set.of(allowedOrigins.split(",")));
             String allowedMethods = config.allowedMethods();
             if (!Utils.isBlank(allowedMethods)) {
-                filterHolder.setInitParameter(CrossOriginFilter.ALLOWED_METHODS_PARAM, allowedMethods);
+                crossOriginHandler.setAllowedMethods(Set.of(allowedMethods.split(",")));
             }
-            context.addFilter(filterHolder, "/*", EnumSet.of(DispatcherType.REQUEST));
+            // Setting to true matches the previously used CrossOriginFilter
+            crossOriginHandler.setDeliverPreflightRequests(true);
+            context.insertHandler(crossOriginHandler);
         }
 
         String headerConfig = config.responseHeaders();
@@ -361,11 +371,11 @@ public abstract class RestServer {
                     }
                 }
             }
-            for (ConnectRestExtension connectRestExtension : connectRestExtensions) {
+            for (Plugin<ConnectRestExtension> connectRestExtensionPlugin : connectRestExtensionPlugins) {
                 try {
-                    connectRestExtension.close();
+                    connectRestExtensionPlugin.close();
                 } catch (IOException e) {
-                    log.warn("Error while invoking close on " + connectRestExtension.getClass(), e);
+                    log.warn("Error while invoking close on {}", connectRestExtensionPlugin.get().getClass(), e);
                 }
             }
             jettyServer.stop();
@@ -447,6 +457,11 @@ public abstract class RestServer {
         this.requestTimeout.timeoutMs(requestTimeoutMs);
     }
 
+    // For testing only
+    public void healthCheckTimeout(long healthCheckTimeoutMs) {
+        this.requestTimeout.healthCheckTimeoutMs(healthCheckTimeoutMs);
+    }
+
     String determineAdvertisedProtocol() {
         String advertisedSecurityProtocol = config.advertisedListener();
         if (advertisedSecurityProtocol == null) {
@@ -490,9 +505,14 @@ public abstract class RestServer {
     }
 
     protected final void registerRestExtensions(Herder herder, ResourceConfig resourceConfig) {
-        connectRestExtensions = herder.plugins().newPlugins(
-            config.restExtensions(),
-            config, ConnectRestExtension.class);
+        connectRestExtensionPlugins = Plugin.wrapInstances(
+                herder.plugins().newPlugins(
+                    config.restExtensions(),
+                    config,
+                    ConnectRestExtension.class
+                ),
+                herder.connectMetrics().metrics(),
+                RestServerConfig.REST_EXTENSION_CLASSES_CONFIG);
 
         long herderRequestTimeoutMs = DEFAULT_REST_REQUEST_TIMEOUT_MS;
 
@@ -511,8 +531,8 @@ public abstract class RestServer {
                 new ConnectRestConfigurable(resourceConfig),
                 new ConnectClusterStateImpl(herderRequestTimeoutMs, connectClusterDetails, herder)
             );
-        for (ConnectRestExtension connectRestExtension : connectRestExtensions) {
-            connectRestExtension.register(connectRestExtensionContext);
+        for (Plugin<ConnectRestExtension> connectRestExtensionPlugin : connectRestExtensionPlugins) {
+            connectRestExtensionPlugin.get().register(connectRestExtensionContext);
         }
 
     }
@@ -531,9 +551,11 @@ public abstract class RestServer {
 
         private final RequestBinder binder;
         private volatile long timeoutMs;
+        private volatile long healthCheckTimeoutMs;
 
-        public RequestTimeout(long initialTimeoutMs) {
+        public RequestTimeout(long initialTimeoutMs, long initialHealthCheckTimeoutMs) {
             this.timeoutMs = initialTimeoutMs;
+            this.healthCheckTimeoutMs = initialHealthCheckTimeoutMs;
             this.binder = new RequestBinder();
         }
 
@@ -542,8 +564,17 @@ public abstract class RestServer {
             return timeoutMs;
         }
 
+        @Override
+        public long healthCheckTimeoutMs() {
+            return healthCheckTimeoutMs;
+        }
+
         public void timeoutMs(long timeoutMs) {
             this.timeoutMs = timeoutMs;
+        }
+
+        public void healthCheckTimeoutMs(long healthCheckTimeoutMs) {
+            this.healthCheckTimeoutMs = healthCheckTimeoutMs;
         }
 
         public Binder binder() {

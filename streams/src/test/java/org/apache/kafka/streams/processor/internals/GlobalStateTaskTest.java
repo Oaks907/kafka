@@ -26,7 +26,6 @@ import org.apache.kafka.common.serialization.LongSerializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.MockTime;
-import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.streams.errors.LogAndContinueExceptionHandler;
 import org.apache.kafka.streams.errors.LogAndFailExceptionHandler;
 import org.apache.kafka.streams.errors.StreamsException;
@@ -35,8 +34,9 @@ import org.apache.kafka.test.MockProcessorNode;
 import org.apache.kafka.test.MockSourceNode;
 import org.apache.kafka.test.NoOpProcessorContext;
 import org.apache.kafka.test.TestUtils;
-import org.junit.Before;
-import org.junit.Test;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.io.File;
 import java.util.Collections;
@@ -47,10 +47,10 @@ import java.util.Set;
 
 import static java.util.Arrays.asList;
 import static org.apache.kafka.streams.processor.internals.testutil.ConsumerRecordUtil.record;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class GlobalStateTaskTest {
 
@@ -81,9 +81,9 @@ public class GlobalStateTaskTest {
     private GlobalStateManagerStub stateMgr;
     private GlobalStateUpdateTask globalStateTask;
 
-    @Before
+    @BeforeEach
     public void before() {
-        final Set<String> storeNames = Utils.mkSet("t1-store", "t2-store");
+        final Set<String> storeNames = Set.of("t1-store", "t2-store");
         final Map<String, SourceNode<?, ?>> sourceByTopics = new HashMap<>();
         sourceByTopics.put(topic1, sourceOne);
         sourceByTopics.put(topic2, sourceTwo);
@@ -254,6 +254,10 @@ public class GlobalStateTaskTest {
         globalStateTask.initialize();
         globalStateTask.update(record(topic1, 1, currentOffsetT1 + 9000L, "foo".getBytes(), "foo".getBytes()));
         time.sleep(flushInterval); // flush interval elapsed
+
+        stateMgr.checkpointWritten = false;
+        stateMgr.flushed = false;
+
         globalStateTask.maybeCheckpoint();
 
         assertEquals(offsets, stateMgr.changelogOffsets());
@@ -269,6 +273,10 @@ public class GlobalStateTaskTest {
         globalStateTask.update(record(topic1, 1, currentOffsetT1 + 10000L, "foo".getBytes(), "foo".getBytes()));
 
         time.sleep(flushInterval / 2);
+
+        stateMgr.checkpointWritten = false;
+        stateMgr.flushed = false;
+
         globalStateTask.maybeCheckpoint();
 
         assertEquals(offsets, stateMgr.changelogOffsets());
@@ -288,6 +296,10 @@ public class GlobalStateTaskTest {
 
         // 10000 records received since last flush => do not flush
         globalStateTask.update(record(topic1, 1, currentOffsetT1 + 9999L, "foo".getBytes(), "foo".getBytes()));
+
+        stateMgr.checkpointWritten = false;
+        stateMgr.flushed = false;
+
         globalStateTask.maybeCheckpoint();
 
         assertEquals(offsets, stateMgr.changelogOffsets());
@@ -332,5 +344,26 @@ public class GlobalStateTaskTest {
         assertTrue(stateMgr.baseDir().exists());
         globalStateTask.close(true);
         assertFalse(stateMgr.baseDir().exists());
+    }
+
+    @Test
+    public void shouldCheckpointDuringInitialization() {
+        globalStateTask.initialize();
+
+        assertTrue(stateMgr.checkpointWritten);
+        assertTrue(stateMgr.flushed);
+    }
+
+    @Test
+    public void shouldCheckpointDuringClose() throws Exception {
+        globalStateTask.initialize();
+
+        stateMgr.checkpointWritten = false;
+        stateMgr.flushed = false;
+
+        globalStateTask.close(false);
+
+        assertTrue(stateMgr.checkpointWritten);
+        assertTrue(stateMgr.flushed);
     }
 }

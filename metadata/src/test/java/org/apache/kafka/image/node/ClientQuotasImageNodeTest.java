@@ -18,14 +18,13 @@
 package org.apache.kafka.image.node;
 
 import org.apache.kafka.common.quota.ClientQuotaEntity;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.util.HashMap;
 import java.util.Map;
 
-import static java.util.Collections.emptyMap;
-import static java.util.Collections.singletonMap;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -61,25 +60,25 @@ public class ClientQuotasImageNodeTest {
 
     @Test
     public void clientIdEntityRoundTrip() {
-        entityToStringRoundTrip(new ClientQuotaEntity(singletonMap("client-id", "foo")),
+        entityToStringRoundTrip(new ClientQuotaEntity(Map.of("client-id", "foo")),
             "clientId(foo)");
     }
 
     @Test
     public void defaultClientIdEntityRoundTrip() {
-        entityToStringRoundTrip(new ClientQuotaEntity(singletonMap("client-id", "")),
+        entityToStringRoundTrip(new ClientQuotaEntity(Map.of("client-id", "")),
             "clientId()");
     }
 
     @Test
     public void userEntityRoundTrip() {
-        entityToStringRoundTrip(new ClientQuotaEntity(singletonMap("user", "my-user-name")),
+        entityToStringRoundTrip(new ClientQuotaEntity(Map.of("user", "my-user-name")),
             "user(my-user-name)");
     }
 
     @Test
     public void defaultUserEntityRoundTrip() {
-        entityToStringRoundTrip(new ClientQuotaEntity(singletonMap("user", "")),
+        entityToStringRoundTrip(new ClientQuotaEntity(Map.of("user", "")),
             "user()");
     }
 
@@ -94,25 +93,25 @@ public class ClientQuotasImageNodeTest {
 
     @Test
     public void ipEntityRoundTrip() {
-        entityToStringRoundTrip(new ClientQuotaEntity(singletonMap("ip", "127.0.0.1")),
+        entityToStringRoundTrip(new ClientQuotaEntity(Map.of("ip", "127.0.0.1")),
             "ip(127.0.0.1)");
     }
 
     @Test
     public void defaultIpEntityRoundTrip() {
-        entityToStringRoundTrip(new ClientQuotaEntity(singletonMap("ip", "")),
+        entityToStringRoundTrip(new ClientQuotaEntity(Map.of("ip", "")),
             "ip()");
     }
 
     @Test
     public void testUserEntityWithBackslashesInNameRoundTrip() {
-        entityToStringRoundTrip(new ClientQuotaEntity(singletonMap("user", "foo\\bar")),
+        entityToStringRoundTrip(new ClientQuotaEntity(Map.of("user", "foo\\bar")),
             "user(foo\\\\bar)");
     }
 
     @Test
     public void testClientIdEntityWithParentheses() {
-        entityToStringRoundTrip(new ClientQuotaEntity(singletonMap("client-id", "(this )one)")),
+        entityToStringRoundTrip(new ClientQuotaEntity(Map.of("client-id", "(this )one)")),
                 "clientId(\\(this \\)one\\))");
     }
 
@@ -120,7 +119,7 @@ public class ClientQuotasImageNodeTest {
     public void testErrorOnInvalidEmptyEntityName() {
         assertEquals("Invalid empty entity",
             assertThrows(RuntimeException.class, () -> ClientQuotasImageNode.
-                clientQuotaEntityToString(new ClientQuotaEntity(emptyMap()))).
+                clientQuotaEntityToString(new ClientQuotaEntity(Map.of()))).
                     getMessage());
     }
 
@@ -128,7 +127,7 @@ public class ClientQuotasImageNodeTest {
     public void testErrorOnInvalidEntityType() {
         assertEquals("Invalid entity type foobar",
             assertThrows(RuntimeException.class, () -> ClientQuotasImageNode.
-                clientQuotaEntityToString(new ClientQuotaEntity(singletonMap("foobar", "baz")))).
+                clientQuotaEntityToString(new ClientQuotaEntity(Map.of("foobar", "baz")))).
                     getMessage());
     }
 }
